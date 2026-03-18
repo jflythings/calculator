@@ -1,0 +1,2818 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Life Calculator · Retirement & Financial Independence</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Cormorant+Garamond:wght@400;600;700&family=JetBrains+Mono:wght@400;600&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0b0c0f;--surface:#13151a;--border:#1e2229;--border2:#262b34;
+  --text:#c9d4e0;--muted:#4a5568;--gold:#c9a84c;--gold-dim:#3d2e10;
+  --mono:'DM Mono',monospace;--serif:'Cormorant Garamond',serif;
+}
+body{background:var(--bg);color:var(--text);font-family:var(--mono);margin:0}
+input[type=range]{accent-color:#c9a84c}
+</style>
+</head>
+<body>
+
+<div id="root"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+
+<script type="text/babel">
+const { useState, useMemo, useRef } = React;
+
+
+/* ── Tokens ── */
+const C = {
+  bg:"#060b14", card:"#0c1322", border:"#162035",
+  text:"#dde6f0", muted:"#4a6080", dim:"#7a94b0",
+  cyan:"#0ef", cyanDim:"#0bbbd4", cyanGlow:"rgba(0,238,255,0.12)",
+  gold:"#f4b942", green:"#22c77a", red:"#f25670", purple:"#b78bfa", orange:"#f0a050",
+};
+
+const S = {
+  body:  { background:C.bg, minHeight:"100vh", fontFamily:"'Outfit',sans-serif", color:C.text, padding:0 },
+  header:{ background:"linear-gradient(135deg,#060f1e 0%,#0a1628 50%,#060f1e 100%)", borderBottom:`1px solid ${C.border}`, padding:"20px 28px 16px", position:"sticky", top:48, zIndex:100 },
+  card:  { background:C.card, border:`1px solid ${C.border}`, borderRadius:12, padding:"20px 24px", marginBottom:16 },
+  label: { fontSize:10, fontWeight:700, letterSpacing:"0.13em", textTransform:"uppercase", color:C.muted, display:"block", marginBottom:5 },
+  mono:  { fontFamily:"'JetBrains Mono',monospace" },
+  serif: { fontFamily:"'Cormorant Garamond',serif" },
+  inp:   { background:"#080e1a", border:`1px solid ${C.border}`, borderRadius:7, color:C.text, padding:"7px 11px", width:"100%", fontFamily:"'JetBrains Mono',monospace", fontSize:13, outline:"none", boxSizing:"border-box" },
+  tab:   (a) => ({ padding:"7px 14px", borderRadius:7, cursor:"pointer", fontWeight:500, fontSize:12, letterSpacing:"0.03em", transition:"all 0.2s", background:a?C.cyanGlow:"transparent", color:a?C.cyan:C.dim, border:a?`1px solid ${C.cyanDim}`:"1px solid transparent", fontFamily:"'Outfit',sans-serif" }),
+  stat:  { background:"#08111f", border:`1px solid ${C.border}`, borderRadius:10, padding:"14px 18px" },
+};
+
+/* ── Helpers ── */
+const $   = n => new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",maximumFractionDigits:0}).format(n||0);
+const $k  = n => { if(!n&&n!==0)return"$0"; const a=Math.abs(n); return a>=1e6?`$${(n/1e6).toFixed(2)}M`:a>=1e3?`$${(n/1e3).toFixed(0)}K`:`$${Math.round(n)}`; };
+const pct = n => `${(+n||0).toFixed(1)}%`;
+const toY = (age,ca) => new Date().getFullYear()+(age-ca);
+const CY  = new Date().getFullYear();
+
+/* ── Loan payoff ── */
+function loanPayoff(balance, annualRate, monthly) {
+  if(balance<=0||monthly<=0) return { months:0, year:CY, totalInterest:0 };
+  const r = annualRate/100/12;
+  let bal=balance, m=0, totalInt=0;
+  while(bal>0.01&&m<600){
+    const int = r===0?0:bal*r;
+    totalInt+=int;
+    const prin=Math.min(monthly-int,bal);
+    bal=Math.max(0,bal-prin);
+    m++;
+  }
+  const d=new Date(CY,new Date().getMonth()); d.setMonth(d.getMonth()+m);
+  return { months:m, year:d.getFullYear(), totalInterest:totalInt };
+}
+
+/* ── UI Atoms ── */
+function Field({ label, value, onChange, prefix, suffix, step=1, min=0, max, note, lc }) {
+  const [local, setLocal] = React.useState(String(value));
+  React.useEffect(()=>{ setLocal(String(value)); }, [value]);
+  return (
+    <div style={{ marginBottom:13 }}>
+      <label style={{ ...S.label, color:lc||C.muted }}>{label}</label>
+      <div style={{ display:"flex", alignItems:"center", gap:4 }}>
+        {prefix&&<span style={{ color:C.muted, fontSize:12, minWidth:12 }}>{prefix}</span>}
+        <input
+          type="text"
+          inputMode="decimal"
+          value={local}
+          onChange={e=>setLocal(e.target.value)}
+          onBlur={()=>{
+            const v=parseFloat(local.replace(/[^0-9.]/g,""))||0;
+            const clamped=max!==undefined?Math.min(max,Math.max(min,v)):Math.max(min,v);
+            onChange(clamped);
+            setLocal(String(clamped));
+          }}
+          style={{ ...S.inp, flex:1 }}
+        />
+        {suffix&&<span style={{ color:C.muted, fontSize:12, marginLeft:4 }}>{suffix}</span>}
+      </div>
+      {note&&<div style={{ fontSize:10, color:C.muted, marginTop:3, lineHeight:1.5 }}>{note}</div>}
+    </div>
+  );
+}
+
+function Slider({ label, value, onChange, min, max, step=1, fmt, color }) {
+  return (
+    <div style={{ marginBottom:14 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+        <label style={{ ...S.label, marginBottom:0 }}>{label}</label>
+        <span style={{ ...S.mono, fontSize:12, color:color||C.cyan }}>{fmt?fmt(value):value}</span>
+      </div>
+      <input type="range" value={value} min={min} max={max} step={step}
+        onChange={e=>onChange(Number(e.target.value))}
+        style={{ width:"100%", accentColor:color||C.cyan, cursor:"pointer" }}/>
+    </div>
+  );
+}
+
+function Toggle({ label, checked, onChange, note }) {
+  return (
+    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:14, gap:12 }}>
+      <div style={{ flex:1 }}>
+        <div style={{ fontSize:13, fontWeight:500 }}>{label}</div>
+        {note&&<div style={{ fontSize:10, color:C.muted, marginTop:2, lineHeight:1.5 }}>{note}</div>}
+      </div>
+      <button onClick={()=>onChange(!checked)} style={{ width:40, height:22, borderRadius:11, background:checked?C.cyan:C.border, position:"relative", cursor:"pointer", transition:"background 0.2s", flexShrink:0, marginTop:2, border:"none", padding:0 }}>
+        <div style={{ width:16, height:16, borderRadius:8, background:"#fff", position:"absolute", top:3, left:checked?21:3, transition:"left 0.2s" }}/>
+      </button>
+    </div>
+  );
+}
+
+function KV({ k, v, vc, bold, indent }) {
+  return (
+    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"5px 0", borderBottom:`1px solid ${C.border}`, paddingLeft:indent?14:0 }}>
+      <span style={{ fontSize:12, color:bold?C.dim:C.muted }}>{k}</span>
+      <span style={{ ...S.mono, fontSize:12, color:vc||C.text, fontWeight:bold?600:400 }}>{v}</span>
+    </div>
+  );
+}
+
+function Head({ title, color, sub }) {
+  return (
+    <div style={{ marginBottom:14 }}>
+      <div style={{ fontSize:13, fontWeight:600, color:color||C.cyan }}>{title}</div>
+      {sub&&<div style={{ fontSize:10, color:C.muted, marginTop:2 }}>{sub}</div>}
+    </div>
+  );
+}
+
+function Tip({ icon, title, body, color }) {
+  return (
+    <div style={{ borderLeft:`3px solid ${color||C.cyan}`, paddingLeft:12, marginBottom:14 }}>
+      <div style={{ fontSize:12, fontWeight:600, color:color||C.cyan, marginBottom:2 }}>{icon} {title}</div>
+      <div style={{ fontSize:11, color:C.muted, lineHeight:1.6 }}>{body}</div>
+    </div>
+  );
+}
+function SectionDivider({ label, color }) {
+  return <div style={{ fontSize:11, fontWeight:600, color:color||C.cyan, margin:"14px 0 8px", paddingBottom:4, borderBottom:`1px solid ${C.border}` }}>{label}</div>;
+}
+
+/* ── Glossary: term → { plain English explanation, law/source link } ── */
+const GLOSSARY = {
+  "Rule of 55": {
+    tip: "If you leave your employer in or after the year you turn 55, you can withdraw from that employer's 401k/TSP penalty-free — no need to wait until 59½. Applies only to the plan at the job you're leaving.",
+    url: "https://www.irs.gov/retirement-plans/plan-participant-employee/retirement-topics-exceptions-to-tax-on-early-distributions",
+  },
+  "Safe Withdrawal Rate": {
+    tip: "The percentage of your portfolio you can withdraw each year with a high probability of not running out of money. The classic number is 4% (the 'Trinity Study'). Longer retirements need a lower rate — 3–3.5% for 40–50 year retirements.",
+    url: "https://www.irs.gov/retirement-plans/retirement-plans-faqs-regarding-substantially-equal-periodic-payments",
+  },
+  "SWR": {
+    tip: "Safe Withdrawal Rate — the percentage of your portfolio you can withdraw annually without depleting it. 4% is the traditional benchmark, but longer retirements may warrant 3–3.5%.",
+    url: "https://www.irs.gov/retirement-plans/retirement-plans-faqs-regarding-substantially-equal-periodic-payments",
+  },
+  "Roth Conversion Ladder": {
+    tip: "A strategy to access retirement funds before 59½ penalty-free. Convert traditional IRA/401k money to a Roth IRA each year. After 5 years, each converted amount becomes accessible without penalty. Requires planning 5 years ahead.",
+    url: "https://www.irs.gov/publications/p590b#en_US_2023_publink100090206",
+  },
+  "SEPP": {
+    tip: "Substantially Equal Periodic Payments (also called 72(t)). Allows penalty-free early withdrawals from IRAs/401ks if you commit to a fixed withdrawal schedule for 5 years or until age 59½ (whichever is longer). Inflexible — modifying the schedule triggers a 10% penalty retroactively.",
+    url: "https://www.irs.gov/retirement-plans/retirement-plans-faqs-regarding-substantially-equal-periodic-payments",
+  },
+  "72(t)": {
+    tip: "IRS code section that allows penalty-free early retirement withdrawals via Substantially Equal Periodic Payments (SEPP). You commit to a fixed schedule for 5 years or age 59½, whichever comes later.",
+    url: "https://www.irs.gov/retirement-plans/retirement-plans-faqs-regarding-substantially-equal-periodic-payments",
+  },
+  "Roth IRA": {
+    tip: "An individual retirement account funded with after-tax dollars. Contributions (not earnings) can be withdrawn anytime penalty-free. Earnings are tax-free after age 59½ if the account has been open 5+ years. No required minimum distributions.",
+    url: "https://www.irs.gov/publications/p590b",
+  },
+  "Traditional IRA": {
+    tip: "An individual retirement account funded with pre-tax dollars. Contributions may be tax-deductible. Withdrawals in retirement are taxed as ordinary income. Required minimum distributions begin at age 73.",
+    url: "https://www.irs.gov/publications/p590a",
+  },
+  "TSP": {
+    tip: "Thrift Savings Plan — the federal government's retirement savings plan, similar to a 401k. Available to military and federal civilian employees. Offers traditional (pre-tax) and Roth options with very low expense ratios.",
+    url: "https://www.tsp.gov/publications/tspbk08.pdf",
+  },
+  "HSA": {
+    tip: "Health Savings Account — triple tax advantage: contributions are pre-tax, growth is tax-free, and withdrawals for qualified medical expenses are tax-free. After age 65 withdrawals for any purpose are taxed like a traditional IRA. Must be enrolled in a High Deductible Health Plan (HDHP) to contribute.",
+    url: "https://www.irs.gov/publications/p969",
+  },
+  "VA Disability": {
+    tip: "Monthly compensation from the Department of Veterans Affairs for service-connected disabilities. Completely excluded from federal taxable income under 26 U.S.C. § 104. Also excluded from Medicare/Medicaid MAGI calculations, giving you unusual tax planning flexibility.",
+    url: "https://www.irs.gov/pub/irs-pdf/p525.pdf",
+  },
+  "FIRE": {
+    tip: "Financial Independence, Retire Early. The point at which your invested portfolio generates enough passive income to cover your living expenses indefinitely — typically calculated as 25x your annual spending (based on the 4% safe withdrawal rate).",
+    url: "https://www.irs.gov/retirement-plans/retirement-plans-faqs-regarding-substantially-equal-periodic-payments",
+  },
+  "FIRE Number": {
+    tip: "The total portfolio value needed to retire. Calculated as your annual spending divided by your Safe Withdrawal Rate. Example: $60,000/year spending ÷ 4% SWR = $1,500,000 FIRE number.",
+    url: "https://www.irs.gov/retirement-plans/plan-participant-employee/retirement-topics-ira-contribution-limits",
+  },
+  "Depreciation Recapture": {
+    tip: "When you sell a rental property, the IRS 'recaptures' the depreciation deductions you took over the years and taxes them at up to 25% (Section 1250 unrecaptured gain) — even if the property qualifies for the $500K primary residence exclusion. Passing the property to heirs eliminates this via stepped-up basis.",
+    url: "https://www.irs.gov/publications/p544",
+  },
+  "Stepped-Up Basis": {
+    tip: "When you inherit an asset, your cost basis is 'stepped up' to the fair market value at the date of death — eliminating any capital gains that accumulated during the deceased's lifetime. A powerful estate planning tool for appreciated assets like real estate.",
+    url: "https://www.irs.gov/publications/p559",
+  },
+  "1031 Exchange": {
+    tip: "A provision (IRC Section 1031) allowing you to defer capital gains taxes when selling an investment property by reinvesting the proceeds into a 'like-kind' replacement property within strict time limits: 45 days to identify, 180 days to close.",
+    url: "https://www.irs.gov/publications/p544#en_US_2023_publink10009867",
+  },
+  "Section 121 Exclusion": {
+    tip: "If you've lived in a home as your primary residence for 2 of the last 5 years, you can exclude up to $250,000 ($500,000 MFJ) of capital gains from the sale. Does not eliminate depreciation recapture from rental years.",
+    url: "https://www.irs.gov/publications/p523",
+  },
+  "QBI Deduction": {
+    tip: "Qualified Business Income deduction (Section 199A) — self-employed individuals and pass-through business owners can deduct up to 20% of qualified business income from taxable income. Subject to income limits and business type restrictions.",
+    url: "https://www.irs.gov/newsroom/tax-cuts-and-jobs-act-provision-11011-section-199a-qualified-business-income-deduction-faqs",
+  },
+  "Solo 401k": {
+    tip: "A 401k plan for self-employed individuals with no employees (other than a spouse). Allows contributions as both employee ($23,500 in 2025) and employer (up to 25% of net self-employment income), resulting in much higher potential contributions than a standard IRA.",
+    url: "https://www.irs.gov/retirement-plans/one-participant-401k-plans",
+  },
+  "SEP IRA": {
+    tip: "Simplified Employee Pension IRA. Allows self-employed individuals to contribute up to 25% of net self-employment income (max ~$70,000 in 2025). Simpler than a Solo 401k but no Roth option and lower contribution flexibility.",
+    url: "https://www.irs.gov/retirement-plans/sep-plan-faqs",
+  },
+  "Self-Employment Tax": {
+    tip: "Self-employed individuals pay both the employee and employer share of Social Security (12.4%) and Medicare (2.9%) taxes — totaling 15.3% on net profit up to the SS wage base, plus 2.9% above it. You can deduct half of SE tax from your AGI.",
+    url: "https://www.irs.gov/businesses/small-businesses-self-employed/self-employment-tax-social-security-and-medicare-taxes",
+  },
+  "S-Corp Election": {
+    tip: "A tax election (Form 2553) that allows an LLC to be taxed as an S-Corporation. The owner pays themselves a 'reasonable salary' (subject to payroll/SE tax) and takes remaining profit as distributions (not subject to SE tax) — reducing the 15.3% self-employment tax burden.",
+    url: "https://www.irs.gov/businesses/small-businesses-self-employed/s-corporations",
+  },
+  "MAGI": {
+    tip: "Modified Adjusted Gross Income — your AGI with certain deductions added back. Determines eligibility for Roth IRA contributions, ACA premium tax credits, and other benefits. VA disability and Roth IRA withdrawals are excluded from MAGI, giving veterans significant tax planning leverage.",
+    url: "https://www.irs.gov/e-file-providers/definition-of-adjusted-gross-income",
+  },
+  "ACA": {
+    tip: "Affordable Care Act. Premium tax credits (subsidies) are available to individuals with MAGI between 100–400% of the Federal Poverty Level. For veterans with VA disability, MAGI can be strategically managed since VA income doesn't count — potentially qualifying for significant subsidies even with substantial total income.",
+    url: "https://www.healthcare.gov/glossary/modified-adjusted-gross-income-magi/",
+  },
+  "RMD": {
+    tip: "Required Minimum Distribution — the IRS requires you to begin withdrawing a minimum amount from traditional retirement accounts (401k, TSP, Traditional IRA) each year starting at age 73. Roth IRAs have no RMDs. Failure to take RMDs results in a 25% excise tax on the amount not withdrawn.",
+    url: "https://www.irs.gov/retirement-plans/plan-participant-employee/retirement-topics-required-minimum-distributions-rmds",
+  },
+  "NOL": {
+    tip: "Net Operating Loss — when your business deductions exceed your business income, the loss can be carried forward to offset taxable income in future profitable years, dollar-for-dollar. Useful when starting a business with initial losses.",
+    url: "https://www.irs.gov/publications/p536",
+  },
+  "DEA": {
+    tip: "Dependents' Educational Assistance (Chapter 35) — VA benefit providing up to 45 months of education benefits to eligible dependents of veterans with a permanent and total (P&T) disability rating or who died from a service-connected condition. Entirely separate from GI Bill transfer.",
+    url: "https://www.va.gov/education/survivor-dependent-benefits/dependents-education-assistance/",
+  },
+  "Chapter 35": {
+    tip: "Dependents' Educational Assistance program — VA education benefit for dependents of veterans rated permanently and totally disabled. Up to 45 months per eligible dependent. Check eligibility at va.gov.",
+    url: "https://www.va.gov/education/survivor-dependent-benefits/dependents-education-assistance/",
+  },
+  "GI Bill": {
+    tip: "Post-9/11 GI Bill (Chapter 33) provides up to 36 months of education benefits including tuition, housing allowance, and book stipend. Benefits are tied to the veteran and can be transferred to dependents only while still on active duty with sufficient service obligation remaining.",
+    url: "https://www.va.gov/education/about-gi-bill-benefits/post-9-11/",
+  },
+  "529 Plan": {
+    tip: "A tax-advantaged savings account for education expenses. Contributions are post-tax but grow tax-free; withdrawals for qualified education expenses are tax-free. Up to $35,000 lifetime can be rolled into a Roth IRA (per beneficiary) after 15 years if unused for education.",
+    url: "https://www.irs.gov/pub/irs-pdf/p970.pdf",
+  },
+  "Roth 401k": {
+    tip: "A 401k contribution option where you contribute after-tax dollars. Grows tax-free, and qualified withdrawals are tax-free. Unlike a Roth IRA, Roth 401k accounts are subject to Required Minimum Distributions unless rolled over to a Roth IRA. Withdrawals don't count toward MAGI.",
+    url: "https://www.irs.gov/retirement-plans/roth-comparison-chart",
+  },
+  "Traditional 401k": {
+    tip: "Pre-tax retirement contributions that reduce your taxable income today. Grows tax-deferred. Withdrawals in retirement are taxed as ordinary income. Subject to RMDs at age 73. Early withdrawals (before 59½) face a 10% penalty plus income tax.",
+    url: "https://www.irs.gov/retirement-plans/401k-plans",
+  },
+  "Employer Match": {
+    tip: "Free money from your employer added to your 401k when you contribute. Common structure: 100% match on first 3–6% of salary you contribute. Always contribute at least enough to capture the full match — it's an immediate 100% return.",
+    url: "https://www.irs.gov/retirement-plans/plan-sponsor/401k-plan-fix-it-guide-employer-matching-contributions",
+  },
+};
+
+/* ── Term Component: tooltip explanation + inline law link ── */
+function Term({ children, term }) {
+  const [show, setShow] = useState(false);
+  const entry = GLOSSARY[term || children];
+  if (!entry) return <span>{children}</span>;
+  return (
+    <span style={{ position: "relative", display: "inline-block" }}>
+      <a
+        href={entry.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        onMouseEnter={() => setShow(true)}
+        onMouseLeave={() => setShow(false)}
+        style={{ borderBottom: `1px dashed ${C.cyanDim}`, cursor: "pointer", color: C.text, textDecoration: "none" }}
+        title="View source law / IRS publication"
+      >
+        {children} <span style={{ color: C.cyanDim, fontSize: 9, verticalAlign: "super", opacity: 0.7 }}>↗</span>
+      </a>
+      {show && (
+        <div style={{
+          position: "absolute", bottom: "calc(100% + 8px)", left: "50%", transform: "translateX(-50%)",
+          background: "#0d1a2e", border: `1px solid ${C.cyanDim}`, borderRadius: 8,
+          padding: "10px 13px", width: 280, zIndex: 999,
+          fontSize: 11, color: C.dim, lineHeight: 1.6, boxShadow: "0 4px 24px rgba(0,0,0,0.6)",
+          pointerEvents: "none",
+        }}>
+          <div style={{ fontWeight: 600, color: C.cyan, marginBottom: 4, fontSize: 11 }}>{term || children}</div>
+          {entry.tip}
+        </div>
+      )}
+    </span>
+  );
+}
+
+/* ── Pure SVG Area Chart — no external dependencies ── */
+function ResponsiveAreaChart({ data, retAge, ssAge, fireNum, hasMortgage, mortPayoffAge, curAge, scenarioData, scenarioRetAge }) {
+  const [tooltip, setTooltip] = useState(null);
+  const svgRef = useRef(null);
+  if (!data || data.length === 0) return null;
+
+  const W = 860, H = 300, ML = 70, MR = 30, MT = 28, MB = 28;
+  const PW = W - ML - MR, PH = H - MT - MB;
+
+  const ages  = data.map(d => d.age);
+  const vals  = data.map(d => d.bal);
+  const minAge = ages[0], maxAge = ages[ages.length - 1];
+  const scenarioVals = scenarioData ? scenarioData.map(d => d.bal) : [];
+  const maxVal = Math.max(...vals, ...scenarioVals, fireNum || 0) * 1.08;
+
+  const xS = age  => ML + ((age - minAge) / (maxAge - minAge)) * PW;
+  const yS = val  => MT + PH - (val / maxVal) * PH;
+
+  // Build base path
+  const pts = data.map(d => `${xS(d.age).toFixed(1)},${yS(d.bal).toFixed(1)}`).join(" L ");
+  const linePath = `M ${pts}`;
+  const areaPath = `${linePath} L ${xS(maxAge).toFixed(1)},${(MT+PH).toFixed(1)} L ${xS(minAge).toFixed(1)},${(MT+PH).toFixed(1)} Z`;
+
+  // Build scenario path
+  const scenarioPath = scenarioData
+    ? `M ${scenarioData.map(d => `${xS(d.age).toFixed(1)},${yS(d.bal).toFixed(1)}`).join(" L ")}`
+    : null;
+
+  // Y axis ticks
+  const yTicks = [];
+  const step = maxVal / 4;
+  for (let i = 0; i <= 4; i++) yTicks.push(i * step);
+
+  // X axis ticks — every 5 years
+  const xTicks = ages.filter(a => a % 5 === 0);
+
+  // Hover handler
+  const handleMouseMove = (e) => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const scaleX = W / rect.width;
+    const mx = (e.clientX - rect.left) * scaleX;
+    const age = Math.round(minAge + ((mx - ML) / PW) * (maxAge - minAge));
+    const d = data.find(d => d.age === age);
+    if (d && mx >= ML && mx <= ML + PW) {
+      setTooltip({ age: d.age, bal: d.bal, x: xS(d.age), y: yS(d.bal) });
+    } else {
+      setTooltip(null);
+    }
+  };
+
+  const refLines = [
+    { age: retAge,        label: "Retire",       color: C.gold,   dash: "6 3" },
+    ssAge ? { age: ssAge, label: "SS starts",    color: C.gold,   dash: "3 3" } : null,
+    { age: 65,            label: "Medicare",     color: C.green,  dash: "4 4" },
+    hasMortgage && mortPayoffAge ? { age: mortPayoffAge, label: "Mortgage off", color: "#b78bfa", dash: "4 4" } : null,
+  ].filter(Boolean);
+
+  return (
+    <div style={{ width:"100%", overflowX:"auto" }}>
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} style={{ width:"100%", height:330, display:"block" }}
+        onMouseMove={handleMouseMove} onMouseLeave={()=>setTooltip(null)}>
+        <defs>
+          <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%"  stopColor={C.cyan} stopOpacity={0.28}/>
+            <stop offset="95%" stopColor={C.cyan} stopOpacity={0.02}/>
+          </linearGradient>
+        </defs>
+
+        {/* Grid lines */}
+        {yTicks.map(v => (
+          <line key={v} x1={ML} x2={ML+PW} y1={yS(v).toFixed(1)} y2={yS(v).toFixed(1)}
+            stroke={C.border} strokeDasharray="3 3" strokeWidth={1}/>
+        ))}
+
+        {/* Y axis labels */}
+        {yTicks.map(v => (
+          <text key={v} x={ML-6} y={yS(v)+4} textAnchor="end" fontSize={9}
+            fill={C.muted} fontFamily="JetBrains Mono,monospace">{$k(v)}</text>
+        ))}
+
+        {/* X axis labels */}
+        {xTicks.map(a => (
+          <text key={a} x={xS(a)} y={MT+PH+14} textAnchor="middle" fontSize={9}
+            fill={C.muted} fontFamily="JetBrains Mono,monospace">{a}</text>
+        ))}
+
+        {/* FIRE # reference line */}
+        {fireNum > 0 && (
+          <>
+            <line x1={ML} x2={ML+PW} y1={yS(fireNum).toFixed(1)} y2={yS(fireNum).toFixed(1)}
+              stroke={C.gold} strokeDasharray="3 3" strokeWidth={1}/>
+            <text x={ML+PW+2} y={yS(fireNum)+4} fontSize={9} fill={C.gold}
+              fontFamily="JetBrains Mono,monospace">FIRE #</text>
+          </>
+        )}
+
+        {/* Vertical reference lines */}
+        {refLines.map(r => r.age >= minAge && r.age <= maxAge && (
+          <g key={r.label}>
+            <line x1={xS(r.age).toFixed(1)} x2={xS(r.age).toFixed(1)}
+              y1={MT} y2={MT+PH} stroke={r.color} strokeDasharray={r.dash} strokeWidth={1.5}/>
+            <text x={xS(r.age)+3} y={MT+10} fontSize={9} fill={r.color}
+              fontFamily="JetBrains Mono,monospace">{r.label}</text>
+          </g>
+        ))}
+
+        {/* Area fill */}
+        <path d={areaPath} fill="url(#areaGrad)"/>
+
+        {/* Base line */}
+        <path d={linePath} fill="none" stroke={C.cyan} strokeWidth={2}/>
+
+        {/* Scenario overlay line */}
+        {scenarioPath&&(
+          <>
+            <path d={scenarioPath} fill="none" stroke={C.gold} strokeWidth={2} strokeDasharray="6 3" opacity={0.85}/>
+            {scenarioRetAge&&scenarioRetAge>=minAge&&scenarioRetAge<=maxAge&&(
+              <g>
+                <line x1={xS(scenarioRetAge).toFixed(1)} x2={xS(scenarioRetAge).toFixed(1)}
+                  y1={MT} y2={MT+PH} stroke={C.gold} strokeDasharray="4 2" strokeWidth={1.5} opacity={0.6}/>
+                <text x={xS(scenarioRetAge)+3} y={MT+22} fontSize={9} fill={C.gold}
+                  fontFamily="JetBrains Mono,monospace">Age {scenarioRetAge}</text>
+              </g>
+            )}
+          </>
+        )}
+
+        {/* Tooltip */}
+        {tooltip && (
+          <g>
+            <line x1={tooltip.x} x2={tooltip.x} y1={MT} y2={MT+PH}
+              stroke={C.muted} strokeWidth={1} strokeDasharray="2 2"/>
+            <circle cx={tooltip.x} cy={tooltip.y} r={4} fill={C.cyan}/>
+            <rect x={Math.min(tooltip.x+8, ML+PW-130)} y={tooltip.y-36}
+              width={120} height={38} rx={6} fill="#0d1a2e" stroke={C.border}/>
+            <text x={Math.min(tooltip.x+14, ML+PW-124)} y={tooltip.y-20}
+              fontSize={10} fill={C.gold} fontFamily="JetBrains Mono,monospace" fontWeight={600}>
+              Age {tooltip.age} · {toY(tooltip.age, curAge)}
+            </text>
+            <text x={Math.min(tooltip.x+14, ML+PW-124)} y={tooltip.y-7}
+              fontSize={11} fill={C.cyan} fontFamily="JetBrains Mono,monospace">
+              {$k(tooltip.bal)}
+            </text>
+          </g>
+        )}
+      </svg>
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════
+   DEFAULT STATE — generic starting point for any user
+══════════════════════════════════════════════════════════════ */
+const DEFAULTS = {
+  /* Profile */
+  curAge:35, retAge:55, planAge:90,
+  /* Salary */
+  salary:75000, salaryGrowth:3, spouseIncome:0,
+  /* Filing status */
+  filingStatus:"mfj", // "mfj" | "single"
+  /* VA Disability (optional) */
+  hasVA:false, vaMonthly:0, vaCola:2.5, vaHealthVet:false,
+  /* Social Security */
+  hasSS:false, ssAge:67, ssMonthly:1800,
+  /* Account balances */
+  trad401kBal:0, roth401kBal:0, rothIRA:0, brokerage:0, hsa:0, cash:10000,
+  /* Contributions */
+  trad401kPct:6, roth401kPct:0, empMatchPct:3, empBasePct:0,
+  hsaAnnual:0, hsaEmployer:0,
+  /* Payroll pre-tax HC premium */
+  hcPremiumPerPaycheck:0,
+  /* Roth IRA annual contribution */
+  rothIRAContrib:0,
+  rothIRAOpenYear: new Date().getFullYear(),
+  /* Extra monthly brokerage investing (overflow above Roth IRA max) */
+  monthlyBrokerageContrib:0,
+  /* Surplus allocation */
+  surplusAction:"spend", // "spend" | "invest"
+  surplusAccount:"brokerage", // "savings" | "roth" | "brokerage" | "hsa" | "401k"
+  /* Contribution optimizer */
+  monthlySavingsBudget:1000,
+  /* Mortgage */
+  hasMortgage:false, mortTotal:0, mortPI:0, mortBal:0, mortRate:6.5, mortPayoff:CY+30,
+  /* Debts */
+  debt1Name:"Car Loan", debt1Bal:0, debt1Rate:5.0, debt1Monthly:0,
+  debt2Name:"Debt 2", debt2Bal:0, debt2Rate:5.0, debt2Monthly:0,
+  debt3Name:"Debt 3", debt3Bal:0, debt3Rate:0, debt3Monthly:0,
+  /* Living expenses */
+  electric:200, water:100, phone:50, internet:60, food:700,
+  carInsurance:150, gasMonthly:150, other:500,
+  propTax:0, homeInsurance:0,
+  /* Retirement */
+  retRatio:80, retExtras:500,
+  /* Healthcare */
+  hcMode:"aca", // "aca" = auto-calculate from ACA table | "manual" = use entered values
+  retTaxableIncome:40000, // estimated annual taxable income in retirement for ACA calc (today's $)
+  vetHC:50, selfHC:700, spouseHC:700, post65HC:420,
+  /* Assumptions */
+  growth:9, inflation:3, swr:4, stateTax:0,
+};
+
+/* ══════════════════════════════════════════════════════════════
+   MAIN
+══════════════════════════════════════════════════════════════ */
+function RetirementCalc() {
+  const [p, setP]             = useState(DEFAULTS);
+  const [onboarded, setOnboarded] = useState(false);
+  const [step, setStep]       = useState(1);
+  const set = (k,v) => setP(prev=>({ ...prev, [k]:v }));
+
+  const TOTAL_STEPS = 9;
+
+  /* ══════ WIZARD ══════ */
+  const WizCard = ({ children, title, sub, tip }) => (
+    <div style={{ maxWidth:520, margin:"0 auto", padding:"0 20px" }}>
+      {tip&&<WizTip icon="💡" text={tip}/>}
+      <div style={{ marginBottom:24 }}>
+        <div style={{ fontSize:22, fontWeight:700, color:C.text, fontFamily:"'Cormorant Garamond',serif", lineHeight:1.2 }}>{title}</div>
+        {sub&&<div style={{ fontSize:12, color:C.muted, marginTop:6, lineHeight:1.6 }}>{sub}</div>}
+      </div>
+      {children}
+    </div>
+  );
+
+  const WizBtn = ({ label, onClick, secondary, disabled }) => (
+    <button onClick={onClick} disabled={disabled} style={{
+      padding:"11px 28px", borderRadius:8, border:"none", cursor:disabled?"not-allowed":"pointer",
+      fontFamily:"'Outfit',sans-serif", fontSize:13, fontWeight:600, letterSpacing:"0.04em",
+      background: secondary ? "transparent" : `linear-gradient(135deg,${C.cyanDim},${C.cyan})`,
+      color: secondary ? C.muted : "#000",
+      border: secondary ? `1px solid ${C.border}` : "none",
+      opacity: disabled ? 0.4 : 1,
+      transition:"all 0.2s",
+    }}>{label}</button>
+  );
+
+  const WizField = ({ label, value, onChange, prefix, suffix, min=0, max, note, type="number" }) => {
+    const [local, setLocal] = React.useState(String(value));
+    React.useEffect(()=>{ setLocal(String(value)); }, [value]);
+    return (
+      <div style={{ marginBottom:18 }}>
+        <label style={{ ...S.label, fontSize:11 }}>{label}</label>
+        <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+          {prefix&&<span style={{ color:C.muted, fontSize:15, minWidth:16 }}>{prefix}</span>}
+          <input
+            type="text"
+            inputMode={type==="number"?"decimal":"text"}
+            value={local}
+            onChange={e=>setLocal(e.target.value)}
+            onBlur={()=>{
+              if(type==="number"){
+                const v=parseFloat(local.replace(/[^0-9.]/g,""))||0;
+                const clamped=max!==undefined?Math.min(max,Math.max(min,v)):Math.max(min,v);
+                onChange(clamped);
+                setLocal(String(clamped));
+              } else { onChange(local); }
+            }}
+            style={{ ...S.inp, fontSize:16, padding:"13px 14px", flex:1, WebkitAppearance:"none", borderRadius:10 }}
+          />
+          {suffix&&<span style={{ color:C.muted, fontSize:13, marginLeft:4 }}>{suffix}</span>}
+        </div>
+        {note&&<div style={{ fontSize:11, color:C.muted, marginTop:5, lineHeight:1.5 }}>{note}</div>}
+      </div>
+    );
+  };
+
+  /* ── Tip card shown on each wizard step ── */
+  const WizTip = ({ icon, text }) => (
+    <div style={{ borderLeft:`3px solid ${C.gold}`, paddingLeft:12, marginBottom:24, background:"rgba(244,185,66,0.05)", borderRadius:"0 8px 8px 0", padding:"12px 12px 12px 14px" }}>
+      <div style={{ fontSize:11, color:C.gold, fontWeight:600, marginBottom:4 }}>{icon} DID YOU KNOW</div>
+      <div style={{ fontSize:12, color:C.dim, lineHeight:1.6 }}>{text}</div>
+    </div>
+  );
+
+  const stepTips = [
+    null, // placeholder
+    // Step 1: Welcome
+    "The average American spends more time planning a vacation than planning for retirement. A few minutes of honest math today can change everything about how your future looks.",
+    // Step 2: Basics — age
+    "Starting to invest at 25 instead of 35 — with the same annual contributions — can result in nearly double the retirement portfolio. Time in the market beats timing the market every time.",
+    // Step 3: Income
+    "Every $1,000/month of guaranteed income in retirement — like a pension or VA disability — reduces your required savings by roughly $300,000. Income streams are the most powerful FIRE accelerators.",
+    // Step 4: Housing
+    "Your mortgage rate is one of the most important numbers in your financial life. A 2.5% mortgage is an asset — never pay it off early. A 7% mortgage is a liability — every extra payment is a guaranteed 7% return.",
+    // Step 5: Vehicle
+    "Car payments are the most common reason people can't save for retirement. A $500/month car payment invested instead from age 25 to 55 at 7% growth becomes over $600,000.",
+    // Step 6: Savings
+    "Already have money invested? It's doing more work than you think. $50,000 invested today at 7% growth for 25 years becomes over $270,000 — without adding another dollar.",
+    // Step 7: Contributions
+    "Your employer match is the only guaranteed 100% instant return in investing. If your employer matches 4% and you contribute 4%, you've already earned a 100% return on those dollars before the market does anything.",
+    // Step 8: Guaranteed income
+    "VA disability compensation is completely excluded from federal income tax and from MAGI calculations — meaning it doesn't count against Roth IRA eligibility or ACA subsidy thresholds. Non-taxable guaranteed income is one of the most powerful FIRE accelerators because it reduces your required portfolio size dollar for dollar.",
+    // Step 9: Expenses
+    "Your monthly spending has a 25× multiplier on what you need to retire. Every $100/month you reduce from your retirement spending reduces your required savings by $30,000. Lifestyle design is retirement planning.",
+  ];
+
+  const WizToggle = ({ label, checked, onChange, note }) => (
+    <button onClick={()=>onChange(!checked)} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"14px 16px", borderRadius:10, width:"100%", textAlign:"left",
+      background: checked ? "rgba(0,238,255,0.06)" : "#07101e", border:`1px solid ${checked?C.cyanDim:C.border}`,
+      cursor:"pointer", marginBottom:10, transition:"all 0.2s" }}>
+      <div>
+        <div style={{ fontSize:13, fontWeight:500, color:checked?C.cyan:C.text }}>{label}</div>
+        {note&&<div style={{ fontSize:10, color:C.muted, marginTop:2 }}>{note}</div>}
+      </div>
+      <div style={{ width:40, height:22, borderRadius:11, background:checked?C.cyan:C.border, position:"relative", flexShrink:0, transition:"background 0.2s", marginLeft:12 }}>
+        <div style={{ width:16, height:16, borderRadius:8, background:"#fff", position:"absolute", top:3, left:checked?21:3, transition:"left 0.2s" }}/>
+      </div>
+    </button>
+  );
+
+  // Step content — function so it re-evaluates when p changes
+  const getWizStep = (s) => {
+    const tip = stepTips[s];
+    if(s===1) return (
+    <WizCard title="Let's build your retirement plan." tip={tip} sub="Answer a few simple questions and we'll model your complete financial picture. Takes about 2 minutes.">
+      <div style={{ display:"flex", flexDirection:"column", gap:12, marginBottom:28 }}>
+        {[
+          { icon:"🎯", label:"Your FIRE number — what you need to retire" },
+          { icon:"📈", label:"Portfolio projection to your target age" },
+          { icon:"💡", label:"Personalized insights and action steps" },
+          { icon:"🔑", label:"Optimal contribution strategy for your situation" },
+        ].map(({ icon,label })=>(
+          <div key={label} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 14px", background:"#07101e", borderRadius:8, border:`1px solid ${C.border}` }}>
+            <span style={{ fontSize:18 }}>{icon}</span>
+            <span style={{ fontSize:12, color:C.dim }}>{label}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ display:"flex", gap:12, alignItems:"center", flexWrap:"wrap" }}>
+        <WizBtn label="Get Started →" onClick={()=>setStep(2)}/>
+        <button onClick={()=>setOnboarded(true)} style={{ background:"none", border:"none", color:C.muted, fontSize:11, cursor:"pointer", textDecoration:"underline" }}>
+          Skip setup — go straight to calculator
+        </button>
+      </div>
+    </WizCard>);
+    if(s===2) return (
+    <WizCard title="The basics." tip={tip} sub="This shapes everything — your time horizon and how long your money needs to last.">
+      <div style={{ marginBottom:16 }}>
+        <div style={{ fontSize:12, color:C.dim, marginBottom:8, fontWeight:500 }}>Filing status</div>
+        <div style={{ display:"flex", gap:8 }}>
+          {[{v:"mfj",l:"Married / Filing Jointly"},{v:"single",l:"Single / Filing Separately"}].map(opt=>(
+            <button key={opt.v} onClick={()=>set("filingStatus",opt.v)} style={{
+              flex:1, padding:"10px 8px", borderRadius:8, cursor:"pointer", textAlign:"center",
+              fontFamily:"'Outfit',sans-serif", fontSize:12, fontWeight:500,
+              background:p.filingStatus===opt.v?"rgba(0,238,255,0.1)":"#07101e",
+              color:p.filingStatus===opt.v?C.cyan:C.dim,
+              border:`1px solid ${p.filingStatus===opt.v?C.cyan:C.border}`,
+            }}>{opt.l}</button>
+          ))}
+        </div>
+      </div>
+      <WizField label="How old are you?" value={p.curAge} onChange={v=>set("curAge",Math.min(80,Math.max(16,v)))} min={16} max={80} suffix="years old"/>
+      <WizField label="What age do you want to retire?" value={p.retAge} onChange={v=>set("retAge",Math.min(85,Math.max(p.curAge+1,v)))} min={p.curAge+1} max={85} suffix="years old"
+        note={`That's ${Math.max(0,p.retAge-p.curAge)} years from now — ${new Date().getFullYear()+(p.retAge-p.curAge)}`}/>
+      <WizField label="Plan your finances through age..." value={p.planAge} onChange={v=>set("planAge",Math.min(105,Math.max(p.retAge+5,v)))} min={p.retAge+5} max={105} suffix="years old"
+        note="How long your money needs to last. 90 is a solid conservative baseline."/>
+    </WizCard>);
+    if(s===3) return (
+    <WizCard title="Your income." tip={tip} sub="We use this to calculate contributions, taxes, and your savings capacity.">
+      <WizField label="Annual gross salary (before taxes)" value={p.salary} onChange={v=>set("salary",v)} prefix="$" note="Your W-2 income before any deductions"/>
+      <WizField label="Expected annual salary growth" value={p.salaryGrowth} onChange={v=>set("salaryGrowth",v)} suffix="%" min={0} max={15} note="3% tracks inflation. Use higher if you expect promotions."/>
+      {p.filingStatus==="mfj"&&<WizField label="Spouse or partner annual income" value={p.spouseIncome} onChange={v=>set("spouseIncome",v)} prefix="$" note="Enter 0 if not applicable"/>}
+      <WizField label="Health insurance premium per paycheck" value={p.hcPremiumPerPaycheck} onChange={v=>set("hcPremiumPerPaycheck",v)} prefix="$" note="Pre-tax payroll deduction — reduces your taxable income. Enter 0 if covered by employer or not applicable."/>
+    </WizCard>);
+    if(s===4) return (
+    <WizCard title="Housing." tip={tip} sub="Your largest expense — and one of the most important variables in your retirement plan.">
+      <WizToggle label="I own a home" checked={p.hasMortgage} onChange={v=>{set("hasMortgage",v); if(!v){set("propTax",0); set("mortBal",0); set("mortPI",0); set("mortTotal",0);}}} note="Toggle off if you rent"/>
+      {p.hasMortgage ? <>
+        <WizField label="Current mortgage balance" value={p.mortBal} onChange={v=>set("mortBal",v)} prefix="$"/>
+        <WizField label="Monthly P&I payment" value={p.mortPI} onChange={v=>{set("mortPI",v);set("mortTotal",v);}} prefix="$" note="Principal & interest only — property tax and insurance entered separately below"/>
+        <WizField label="Interest rate" value={p.mortRate} onChange={v=>set("mortRate",v)} suffix="%" min={0} max={15}/>
+        <WizField label="Monthly property tax" value={p.propTax} onChange={v=>set("propTax",v)} prefix="$" note="Annual tax ÷ 12"/>
+        <WizField label="Monthly home insurance" value={p.homeInsurance} onChange={v=>set("homeInsurance",v)} prefix="$"/>
+      </> : <>
+        <WizField label="Monthly rent" value={p.mortTotal} onChange={v=>set("mortTotal",v)} prefix="$" note="Treated as a housing expense in your budget"/>
+        <WizField label="Monthly renters insurance" value={p.homeInsurance} onChange={v=>set("homeInsurance",v)} prefix="$"/>
+      </>}
+    </WizCard>);
+    if(s===5) return (
+    <WizCard title="Debts." tip={tip} sub="Non-mortgage debts — enter what you have and we'll track when each clears and redirect that cash toward investments.">
+
+      {/* Car loan — always shown as example */}
+      <div style={{ background:"#07101e", borderRadius:10, padding:"14px", marginBottom:10 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+          <input value={p.debt1Name} onChange={e=>set("debt1Name",e.target.value)}
+            style={{ ...S.inp, fontSize:13, fontWeight:600, color:C.cyan, width:"60%" }}/>
+          <WizToggle label="Active" checked={p.debt1Bal>0}
+            onChange={v=>{ if(!v){set("debt1Bal",0);set("debt1Monthly",0);}else{set("debt1Bal",10000);set("debt1Monthly",300);}}}/>
+        </div>
+        {p.debt1Bal>0&&<>
+          <WizField label="Balance" value={p.debt1Bal} onChange={v=>set("debt1Bal",v)} prefix="$"/>
+          <WizField label="Interest rate" value={p.debt1Rate} onChange={v=>set("debt1Rate",v)} suffix="%" min={0} max={30}/>
+          <WizField label="Monthly payment" value={p.debt1Monthly} onChange={v=>set("debt1Monthly",v)} prefix="$"/>
+        </>}
+      </div>
+
+      {/* Second debt */}
+      {(p.debt1Bal>0 || p.debt2Bal>0) && (
+        <div style={{ background:"#07101e", borderRadius:10, padding:"14px", marginBottom:10 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+            <input value={p.debt2Name} onChange={e=>set("debt2Name",e.target.value)}
+              style={{ ...S.inp, fontSize:13, fontWeight:600, color:C.cyan, width:"60%" }}/>
+            <WizToggle label="Active" checked={p.debt2Bal>0}
+              onChange={v=>{ if(!v){set("debt2Bal",0);set("debt2Monthly",0);}else{set("debt2Bal",10000);set("debt2Monthly",300);}}}/>
+          </div>
+          {p.debt2Bal>0&&<>
+            <WizField label="Balance" value={p.debt2Bal} onChange={v=>set("debt2Bal",v)} prefix="$"/>
+            <WizField label="Interest rate" value={p.debt2Rate} onChange={v=>set("debt2Rate",v)} suffix="%" min={0} max={30}/>
+            <WizField label="Monthly payment" value={p.debt2Monthly} onChange={v=>set("debt2Monthly",v)} prefix="$"/>
+          </>}
+        </div>
+      )}
+
+      {/* Third debt */}
+      {(p.debt2Bal>0 || p.debt3Bal>0) && (
+        <div style={{ background:"#07101e", borderRadius:10, padding:"14px", marginBottom:10 }}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+            <input value={p.debt3Name} onChange={e=>set("debt3Name",e.target.value)}
+              style={{ ...S.inp, fontSize:13, fontWeight:600, color:C.cyan, width:"60%" }}/>
+            <WizToggle label="Active" checked={p.debt3Bal>0}
+              onChange={v=>{ if(!v){set("debt3Bal",0);set("debt3Monthly",0);}else{set("debt3Bal",5000);set("debt3Monthly",200);}}}/>
+          </div>
+          {p.debt3Bal>0&&<>
+            <WizField label="Balance" value={p.debt3Bal} onChange={v=>set("debt3Bal",v)} prefix="$"/>
+            <WizField label="Interest rate" value={p.debt3Rate} onChange={v=>set("debt3Rate",v)} suffix="%" min={0} max={30}/>
+            <WizField label="Monthly payment" value={p.debt3Monthly} onChange={v=>set("debt3Monthly",v)} prefix="$"/>
+          </>}
+        </div>
+      )}
+
+      {p.debt1Bal===0 && p.debt2Bal===0 && p.debt3Bal===0 && (
+        <div style={{ fontSize:11, color:C.muted, textAlign:"center", padding:"4px 0 8px" }}>
+          Toggle on to add a debt, or continue if you have none.
+        </div>
+      )}
+    </WizCard>);
+    if(s===6) return (
+    <WizCard title="Your savings so far." tip={tip} sub="Enter current balances. Don't worry if you're starting from zero — that's what we're here for.">
+      <WizField label="Traditional 401k / TSP balance" value={p.trad401kBal} onChange={v=>set("trad401kBal",v)} prefix="$" note="Pre-tax contributions — taxable on withdrawal"/>
+      <WizField label="Roth 401k balance" value={p.roth401kBal} onChange={v=>set("roth401kBal",v)} prefix="$" note="After-tax contributions — tax-free on qualified withdrawal"/>
+      <WizField label="Roth IRA balance" value={p.rothIRA} onChange={v=>set("rothIRA",v)} prefix="$"/>
+      <WizField label="HSA balance" value={p.hsa} onChange={v=>set("hsa",v)} prefix="$"/>
+      <WizField label="Taxable brokerage / investments" value={p.brokerage} onChange={v=>set("brokerage",v)} prefix="$"/>
+      <WizField label="Cash savings / emergency fund" value={p.cash} onChange={v=>set("cash",v)} prefix="$" note="Checking, savings, money market"/>
+    </WizCard>);
+    if(s===7) return (
+    <WizCard title="How you're investing." tip={tip} sub="This drives the projection — even small contribution changes have a big long-term impact.">
+      <WizField label="Your 401k / TSP contribution (% of salary)" value={p.trad401kPct+p.roth401kPct} onChange={v=>{set("trad401kPct",v);set("roth401kPct",0);}} suffix="%" min={0} max={50} note={`${$(p.salary*(p.trad401kPct+p.roth401kPct)/100)}/yr · split Roth vs Traditional in Variables`}/>
+      <WizField label="Employer match (% of salary)" value={p.empMatchPct} onChange={v=>set("empMatchPct",v)} suffix="%" min={0} max={15} note={`Free money: ${$(p.salary*p.empMatchPct/100)}/yr`}/>
+      <WizField label="Annual Roth IRA contribution" value={p.rothIRAContrib} onChange={v=>set("rothIRAContrib",Math.min(rothIRALimit,v))} prefix="$" min={0} max={rothIRALimit} note={`2026 max: ${$(rothIRALimit)}${p.curAge>=50?" (catch-up included)":""}`}/>
+      <WizField label="Annual HSA contribution" value={p.hsaAnnual} onChange={v=>set("hsaAnnual",v)} prefix="$" min={0} note="2026 max: $8,750 family · $4,400 individual (+$1,000 catch-up at 55+)"/>
+      <div style={{ height:1, background:C.border, margin:"16px 0" }}/>
+      <WizToggle label="I have a 401k loan" checked={p.debt3Bal>0}
+        onChange={v=>{ if(!v){set("debt3Bal",0);set("debt3Monthly",0);set("debt3Rate",0);}else{set("debt3Bal",5000);set("debt3Monthly",200);set("debt3Name","401k Loan");set("debt3Rate",0);}}}
+        note="401k loans repay to yourself but cost you market returns on the borrowed balance — often more expensive than they appear"/>
+      {p.debt3Bal>0&&<>
+        <WizField label="Remaining loan balance" value={p.debt3Bal} onChange={v=>set("debt3Bal",v)} prefix="$"/>
+        <WizField label="Monthly payment" value={p.debt3Monthly} onChange={v=>set("debt3Monthly",v)} prefix="$" note="Repayments go back into your 401k — modeled as contributions"/>
+      </>}
+    </WizCard>);
+    if(s===8) return (
+    <WizCard title="Guaranteed income." tip={tip} sub="Non-taxable or guaranteed income dramatically reduces your required savings — every $1,000/month here means ~$300,000 less you need in the portfolio.">
+      <WizToggle label="I receive non-taxable guaranteed income" checked={p.hasVA} onChange={v=>set("hasVA",v)} note="VA disability, pension, or any tax-free income — excluded from MAGI calculations"/>
+      {p.hasVA&&<>
+        <WizField label="Monthly amount (total non-taxable income)" value={p.vaMonthly} onChange={v=>set("vaMonthly",v)} prefix="$" note={p.filingStatus==="mfj"
+          ? "2026 VA rates (with spouse) — 30%: $617 · 50%: $1,242 · 70%: $1,961 · 100%: $4,158"
+          : "2026 VA rates (veteran alone) — 10%: $176 · 30%: $538 · 50%: $1,133 · 70%: $1,808 · 100%: $3,939"
+        }/>
+        <WizToggle label="I use VA healthcare" checked={p.vaHealthVet} onChange={v=>set("vaHealthVet",v)} note="50%+ rating → Priority Group 2"/>
+      </>}
+      <WizToggle label="I plan to take Social Security" checked={p.hasSS} onChange={v=>set("hasSS",v)} note="Can be received simultaneously with VA disability — no offset"/>
+      {p.hasSS&&<>
+        <WizField label="Estimated monthly SS benefit at full retirement age" value={p.ssMonthly} onChange={v=>set("ssMonthly",v)} prefix="$" note="Get your real estimate at ssa.gov/myaccount"/>
+        <WizField label="What age do you plan to claim SS?" value={p.ssAge} onChange={v=>set("ssAge",v)} min={62} max={70} suffix="years old" note="62=reduced · 67=full · 70=maximum (+32% vs 67)"/>
+      </>}
+    </WizCard>);
+    if(s===9) return (
+    <WizCard title="Monthly living expenses." tip={tip} sub="Your spending level determines your FIRE number — every dollar here has roughly a 25× multiplier on what you need saved.">
+      <WizField label="Food & groceries" value={p.food} onChange={v=>set("food",v)} prefix="$" note="Monthly grocery and dining budget"/>
+      <WizField label="Utilities (electric + water combined)" value={p.electric+p.water} onChange={v=>{set("electric",Math.round(v*0.67));set("water",Math.round(v*0.33));}} prefix="$"/>
+      <WizField label="Phone & internet" value={p.phone+p.internet} onChange={v=>{set("phone",Math.round(v*0.45));set("internet",Math.round(v*0.55));}} prefix="$"/>
+      <WizField label="Car insurance (all vehicles)" value={p.carInsurance} onChange={v=>set("carInsurance",v)} prefix="$"/>
+      <WizField label="Gas / transportation" value={p.gasMonthly} onChange={v=>set("gasMonthly",v)} prefix="$"/>
+      <WizField label="Everything else (misc. monthly)" value={p.other} onChange={v=>set("other",v)} prefix="$" note="Subscriptions, clothing, entertainment, personal care"/>
+    </WizCard>);
+    return null;
+  };
+
+  /* ══════════════════════════════════════════════════════════════════════════
+     ANNUAL UPDATE CHECKLIST — update these when tax year changes
+     Last updated: 2026 (IRS Rev. Proc. 2025-32 + OBBBA adjustments)
+     Next review:  January 2027
+
+     To update:
+     1. TAX_YEAR — increment
+     2. BKTS_MFJ / BKTS_SINGLE — bracket widths from IRS Rev. Proc.
+     3. STD_DED_MFJ / STD_DED_SINGLE — standard deduction amounts
+     4. FPL_MFJ / FPL_SINGLE — Federal Poverty Level (HHS, published Jan/Feb)
+     5. IRA_LIMIT / IRA_CATCHUP — from IRS COLA announcement (Oct)
+     6. HSA_SELF / HSA_FAMILY / HSA_CATCHUP — from IRS Rev. Proc.
+     7. K401_LIMIT / K401_CATCHUP / K401_SUPER — from IRS COLA announcement
+     8. MEDICARE_BASE — Part B premium (CMS, announced Nov)
+     9. VA rates in field notes — from VA.gov (Dec 1 each year)
+     10. Roth IRA phase-out ranges in MAGI section
+     11. RATE_SAVINGS / RATE_BROK / RATE_ROTH / RATE_HSA — review annually against market conditions
+  ══════════════════════════════════════════════════════════════════════════ */
+  const TAX_YEAR = 2026;
+
+  /* ══════ SHARED TAX CALCULATION — single source of truth for all brackets ══════ */
+  // 2026 IRS bracket widths (not cumulative tops) for MFJ and Single
+  const BKTS_MFJ    = [[24800,.10],[76000,.12],[110600,.22],[192150,.24],[108900,.32],[256250,.35],[Infinity,.37]];
+  const BKTS_SINGLE = [[12400,.10],[38000,.12],[55300,.22],[96075,.24],[54450,.32],[384375,.35],[Infinity,.37]];
+  const STD_DED_MFJ    = 32200;
+  const STD_DED_SINGLE = 16100;
+  const FICA_RATE      = 0.0765;
+  const PAYCHECKS_YR   = 26;
+  const FPL_MFJ        = 21150;  // 2026 base FPL for household of 2
+  const FPL_SINGLE     = 15650;  // 2026 base FPL for individual
+  const PRE55_PENALTY  = 0.30;   // effective cost of pre-55 401k withdrawal (10% penalty + ~20% tax)
+  const PRE55_PARTIAL  = 0.60;   // fraction of penalty applied — partial since some funds accessible penalty-free
+
+  // Pure function: given taxable income and filing status, returns { tax, effectiveRate, marginalRate }
+  const calcTax = (taxableIncome, isMfj) => {
+    const bkts = isMfj ? BKTS_MFJ : BKTS_SINGLE;
+    let tax = 0, rem = Math.max(0, taxableIncome), marginal = 0;
+    for(const [cap, r] of bkts) {
+      const t = Math.min(rem, cap);
+      tax += t * r;
+      if(t > 0) marginal = r;
+      rem -= t;
+      if(rem <= 0) break;
+    }
+    return {
+      tax,
+      effectiveRate: taxableIncome > 0 ? tax / taxableIncome : 0,
+      marginalRate: marginal,
+    };
+  };
+
+  // Given a net-after-tax amount needed, gross it up to the pre-tax withdrawal amount
+  // Uses iterative approach since effective rate depends on the gross amount
+  const grossUpWithdrawal = (netNeeded, isMfj, stdDed) => {
+    if(netNeeded <= 0) return 0;
+    // Binary search: find gross such that gross - tax(gross - stdDed) = netNeeded
+    let lo = netNeeded, hi = netNeeded * 2;
+    for(let i = 0; i < 20; i++) {
+      const mid = (lo + hi) / 2;
+      const taxable = Math.max(0, mid - stdDed);
+      const { tax } = calcTax(taxable, isMfj);
+      const net = mid - tax;
+      if(net < netNeeded) lo = mid; else hi = mid;
+    }
+    return (lo + hi) / 2;
+  };
+
+  const RATE_SAVINGS  = 2.0;  // HYSA / savings account
+  const RATE_BROK     = 6.0;  // Taxable brokerage (after LTCG tax drag)
+  const RATE_ROTH     = 7.0;  // Roth IRA + Roth 401k (tax-free growth)
+  const RATE_HSA      = 9.0;  // HSA invested (triple tax advantage, aggressive)
+  // Traditional 401k/TSP uses p.growth (user-configurable, default 9%)
+  // Savings account uses RATE_SAVINGS (replaces savingsRate in DEFAULTS)
+
+  /* ══════ SHARED SIMULATION ENGINE ══════════════════════════════════════════
+     Single source of truth for all portfolio projections.
+     Called by: useMemo (main projection + sweep), computeScenarioChart (Page 2)
+
+     q             — full params object (p or modified scenario copy)
+     livingMo      — pre-computed monthly living expenses
+     hcFn          — makeHcMonthly(q) result
+     surplusFn     — yearlySurplus function for this param set
+     debtMonths    — { d1, d2, d3 } months to payoff for each debt
+  ════════════════════════════════════════════════════════════════════════════ */
+  const runSimulation = (q, livingMo, hcFn, surplusFn, debtMonths, retAge) => {
+    const isMfj = q.filingStatus === "mfj";
+    // All buckets grow at user's assumed rate — differentiated rates apply only to surplus routing
+    let trad    = q.trad401kBal;   // Traditional 401k/TSP
+    let roth401 = q.roth401kBal;   // Roth 401k
+    let rothIRA = q.rothIRA;       // Roth IRA
+    let hsaBal  = q.hsa;           // HSA
+    let brok    = q.brokerage;     // Taxable brokerage
+    let sav     = 0;               // Savings/HYSA — surplus only, grows at RATE_SAVINGS
+    let ok = true;
+    const data = [];
+    const earlyPenaltyRate = retAge < 55 ? PRE55_PENALTY : 0;
+    const gr  = q.growth/100;      // user's assumed portfolio growth rate
+    const grS = RATE_SAVINGS/100;  // savings account — lower, no market risk
+
+    const hsaForYrQ = yr => {
+      return (q.hsaAnnual||0) + (q.hsaEmployer||0);
+    };
+
+    for(let age = q.curAge; age <= q.planAge; age++) {
+      const yr  = CY + (age - q.curAge);
+      const yrs = age - q.curAge;
+      const yrsR = age - retAge;
+      const inRet = age >= retAge;
+      const total = () => Math.max(0, trad+roth401+rothIRA+hsaBal+brok+sav);
+
+      if(!inRet) {
+        const sal = q.salary * Math.pow(1+q.salaryGrowth/100, yrs);
+        const tradContrib  = sal*((q.trad401kPct+q.empMatchPct+q.empBasePct)/100);
+        const roth401Cont  = sal*(q.roth401kPct/100);
+        const loanRepay    = (q.debt3Bal>0 && yrs*12 < debtMonths.d3) ? q.debt3Monthly*12 : 0;
+        const surplus      = surplusFn(yrs);
+        // Surplus goes to correct bucket — savings at lower rate, everything else at p.growth
+        trad    = trad   *(1+gr) + tradContrib + loanRepay + (surplus.ret||0);
+        roth401 = roth401*(1+gr) + roth401Cont;
+        rothIRA = rothIRA*(1+gr) + (q.rothIRAContrib||0) + (surplus.roth||0);
+        hsaBal  = hsaBal *(1+gr) + hsaForYrQ(yr) + (surplus.hsa||0);
+        brok    = brok   *(1+gr) + (q.monthlyBrokerageContrib||0)*12 + (surplus.brok||0);
+        sav     = sav    *(1+grS) + (surplus.sav||0);
+      } else {
+        const baseNoHousing = q.hasMortgage
+          ? (livingMo - q.propTax - q.homeInsurance)
+          : (livingMo - q.homeInsurance);
+        const lInfl = q.hasMortgage
+          ? baseNoHousing*12*(q.retRatio/100)*Math.pow(1+q.inflation/100,yrs) + (q.propTax+q.homeInsurance)*12*Math.pow(1+q.inflation/100*1.5,yrs)*(q.retRatio/100)
+          : baseNoHousing*12*(q.retRatio/100)*Math.pow(1+q.inflation/100,yrs);
+        const eInfl = q.retExtras*12*Math.pow(1+q.inflation/100,yrs);
+        const mAnn  = (q.hasMortgage ? (yr <= q.mortPayoff ? q.mortTotal*12 : 0) : q.mortTotal*12);
+        const hcAnn = hcFn(age, yrsR)*12;
+        const vaAnn = q.hasVA  ? q.vaMonthly*12*Math.pow(1+q.vaCola/100,yrs) : 0;
+        const ssAnn = q.hasSS && age>=q.ssAge ? q.ssMonthly*12*Math.pow(1+q.inflation/100,yrs) : 0;
+        const draw  = Math.max(0, lInfl+eInfl+mAnn+hcAnn-vaAnn-ssAnn);
+
+        if(retAge < 55) {
+          // Pre-55: brokerage first, then penalized retirement accounts
+          const brokDraw = Math.min(draw, Math.max(0, brok+sav));
+          const retDraw  = Math.max(0, draw - brokDraw);
+          const penDraw  = retDraw > 0 ? retDraw / (1 - earlyPenaltyRate) : 0;
+          const rothPen  = Math.min(penDraw * PRE55_PARTIAL, Math.max(0, roth401+rothIRA));
+          const tradPen  = Math.max(0, penDraw - rothPen);
+          trad    = trad   *(1+gr) - tradPen;
+          roth401 = roth401*(1+gr) - rothPen*0.5;
+          rothIRA = rothIRA*(1+gr) - rothPen*0.5;
+          hsaBal  = hsaBal *(1+gr);
+          brok    = brok   *(1+gr) - brokDraw*0.7;
+          sav     = sav    *(1+grS) - brokDraw*0.3;
+        } else {
+          // 55+: Traditional up to std deduction (tax-free), then Roth, then grossed-up overflow
+          const stdDed   = isMfj ? STD_DED_MFJ : STD_DED_SINGLE;
+          const tradFree = Math.min(draw, Math.min(stdDed, Math.max(0, trad)));
+          const remain   = Math.max(0, draw - tradFree);
+          const rothAvail= Math.max(0, roth401+rothIRA);
+          const rothDraw = Math.min(remain, rothAvail);
+          const overflow = Math.max(0, remain - rothDraw);
+          const tradDraw = tradFree + (overflow > 0 ? grossUpWithdrawal(overflow, isMfj, stdDed) : 0);
+          trad    = trad   *(1+gr) - tradDraw;
+          roth401 = roth401*(1+gr) - rothDraw*0.5;
+          rothIRA = rothIRA*(1+gr) - rothDraw*0.5;
+          hsaBal  = hsaBal *(1+gr);
+          brok    = brok   *(1+gr);
+          sav     = sav    *(1+grS);
+        }
+
+        if(total() <= 0) { ok=false; trad=0; roth401=0; rothIRA=0; hsaBal=0; brok=0; sav=0; }
+      }
+      data.push({ age, bal: Math.round(total()), curAge: q.curAge });
+    }
+    return { ok, data, final: data[data.length-1]?.bal || 0 };
+  };
+
+
+  const makeHcMonthly = (q) => (age, yrsR) => {
+    const inf = Math.pow(1+q.inflation/100*1.25, yrsR);
+    const married = q.filingStatus === "mfj";
+    // Post-65: Medicare + supplement
+    if(age >= 65) return q.post65HC * (married ? 2 : 1) * inf;
+    // Pre-65: ACA mode or manual
+    if(q.hcMode === "aca") {
+      const incInf = q.retTaxableIncome * Math.pow(1+q.inflation/100, yrsR);
+      const fpl = (married ? FPL_MFJ : FPL_SINGLE) * Math.pow(1+q.inflation/100, yrsR);
+      const unsubInf = ((q.hasVA&&q.vaHealthVet ? q.vetHC : q.selfHC) + (married ? q.spouseHC : 0)) * Math.pow(1+q.inflation/100*1.25, yrsR);
+      if(incInf <= 0) return unsubInf;
+      const fplPct = incInf / fpl * 100;
+      if(fplPct > 400) return unsubInf;
+      let reqPct;
+      if(fplPct <= 133)      reqPct = 0.0206;
+      else if(fplPct <= 150) reqPct = 0.0309 + (fplPct-133)/(150-133)*(0.0412-0.0309);
+      else if(fplPct <= 200) reqPct = 0.0412 + (fplPct-150)/(200-150)*(0.0618-0.0412);
+      else if(fplPct <= 250) reqPct = 0.0618 + (fplPct-200)/(250-200)*(0.0824-0.0618);
+      else if(fplPct <= 300) reqPct = 0.0824 + (fplPct-250)/(300-250)*(0.1030-0.0824);
+      else                   reqPct = 0.1030;
+      return Math.max(0, unsubInf - Math.max(0, unsubInf - incInf * reqPct / 12));
+    } else {
+      return ((q.hasVA&&q.vaHealthVet ? q.vetHC : q.selfHC) + (married ? q.spouseHC : 0)) * inf;
+    }
+  };
+  // Default instance uses current p
+  const hcMonthlyP = makeHcMonthly(p);
+
+
+  // Roth/Traditional IRA: $7,500 base · $1,100 catch-up at 50+ = $8,600 total
+  const rothIRALimit = p.curAge >= 50 ? 8600 : 7500;
+  // HSA: $4,400 self-only · $8,750 family · +$1,000 catch-up at 55+
+  const hsaLimitAnnual = (p.filingStatus === "mfj" ? 8750 : 4400) + (p.curAge >= 55 ? 1000 : 0);
+  // 401k/403b/TSP: $24,500 base · +$8,000 at 50+ ($32,500) · ages 60-63 super catch-up = $35,750
+  const k401kLimit = (p.curAge >= 60 && p.curAge <= 63) ? 35750 : p.curAge >= 50 ? 32500 : 24500;
+
+  /* ══════ ACA SUBSIDY HELPER (component-level for use in both math and render) ══════ */
+  const calcACA = (annualIncome) => {
+    const married = p.filingStatus === "mfj";
+    const fpl = married ? FPL_MFJ : FPL_SINGLE;
+    const unsubRaw = (p.hasVA&&p.vaHealthVet ? p.vetHC : p.selfHC) + (married ? p.spouseHC : 0);
+    if(annualIncome <= 0) return { premium: unsubRaw, subsidy: 0, fplPct: 0 };
+    const fplPct = annualIncome / fpl * 100;
+    if(fplPct > 400) return { premium: unsubRaw, subsidy: 0, fplPct };
+    let reqPct;
+    if(fplPct <= 133)       reqPct = 0.0206;
+    else if(fplPct <= 150)  reqPct = 0.0309 + (fplPct-133)/(150-133)*(0.0412-0.0309);
+    else if(fplPct <= 200)  reqPct = 0.0412 + (fplPct-150)/(200-150)*(0.0618-0.0412);
+    else if(fplPct <= 250)  reqPct = 0.0618 + (fplPct-200)/(250-200)*(0.0824-0.0618);
+    else if(fplPct <= 300)  reqPct = 0.0824 + (fplPct-250)/(300-250)*(0.1030-0.0824);
+    else                    reqPct = 0.1030;
+    const maxContrib = annualIncome * reqPct / 12;
+    const subsidy = Math.max(0, unsubRaw - maxContrib);
+    return { premium: Math.max(0, unsubRaw - subsidy), subsidy, fplPct };
+  };
+
+  /* ══════ CORE MATH ══════ */
+  const C2 = useMemo(()=>{
+    /* ── Loans ── */
+    const debt1  = loanPayoff(p.debt1Bal,  p.debt1Rate,  p.debt1Monthly);
+    const debt2  = loanPayoff(p.debt2Bal,  p.debt2Rate,  p.debt2Monthly);
+    const debt3  = loanPayoff(p.debt3Bal,  p.debt3Rate,  p.debt3Monthly);
+    const mort   = loanPayoff(p.mortBal,   p.mortRate,   p.mortPI);
+    const totalNonMortDebt    = p.debt1Bal+p.debt2Bal+p.debt3Bal;
+    const monthlyDebtPayments = p.debt1Monthly+p.debt2Monthly+p.debt3Monthly;
+    const debtFreeYear = Math.max(
+      p.debt1Bal>0?debt1.year:CY,
+      p.debt2Bal>0?debt2.year:CY,
+      p.debt3Bal>0?debt3.year:CY,
+    );
+
+    /* ── Portfolio totals ── */
+    const trad401kTotal   = p.trad401kBal;
+    const roth401kTotal   = p.roth401kBal;
+    const totalRetirement = trad401kTotal + roth401kTotal + p.rothIRA;
+    const totalInvested   = totalRetirement + p.brokerage + p.hsa;
+    const totalLiquid     = totalInvested + p.cash;
+    const rothFraction    = totalRetirement > 0 ? (roth401kTotal + p.rothIRA) / totalRetirement : 0;
+    const sampleTradDraw  = 50000;
+    const { effectiveRate: sampleEffRate } = calcTax(Math.max(0, sampleTradDraw - stdDed), mfj);
+    const withdrawalTaxRate = (1 - rothFraction) * sampleEffRate;
+
+    /* ── Contributions ── */
+    const tradAmt = p.salary*(p.trad401kPct/100);
+    const rothAmt = p.salary*(p.roth401kPct/100);
+    const empM    = p.salary*(p.empMatchPct/100);
+    const empB    = p.salary*(p.empBasePct/100);
+    const empTotal = empM+empB;
+    const hsaForYr = yr => {
+      return p.hsaAnnual + p.hsaEmployer;
+    };
+    const annualToAccounts = tradAmt+rothAmt+empM+empB+p.hsaAnnual+p.hsaEmployer+p.rothIRAContrib;
+
+    /* ── Taxes 2026 ── */
+    const mfj = p.filingStatus === "mfj";
+    const stdDed = mfj ? STD_DED_MFJ : STD_DED_SINGLE; // 2026 IRS
+    const hcPremAnnual = p.hcPremiumPerPaycheck*PAYCHECKS_YR;
+    const preTax  = tradAmt+p.hsaAnnual+hcPremAnnual;
+    const agi     = Math.max(0, p.salary-preTax);
+    const taxable = Math.max(0, agi-stdDed);
+    const { tax: fedTax } = calcTax(taxable, mfj);
+    const fica       = p.salary*FICA_RATE;
+    const stateTaxAmt= agi*(p.stateTax/100);
+    const takeHome   = (p.salary-preTax-rothAmt-fica-fedTax-stateTaxAmt)/12;
+    const vaMonthly  = p.hasVA ? p.vaMonthly : 0;
+    const totalIncome= takeHome+vaMonthly+(p.spouseIncome/12);
+
+    /* ── Monthly expenses ── */
+    const livingMonthly = p.electric+p.water+p.phone+p.internet+p.food+p.carInsurance+p.gasMonthly+p.other+p.propTax+p.homeInsurance;
+    const mortMonthly   = p.mortTotal; // covers both rent and mortgage payment
+    const totalExp      = mortMonthly+livingMonthly+monthlyDebtPayments;
+    const cashFlow      = totalIncome-totalExp;
+
+    /* ── Surplus routing — calculated per year in projection loops ── */
+    const surplusInvest = p.surplusAction === "invest";
+    const surplusToRet  = surplusInvest && p.surplusAccount==="401k";
+    const surplusToRoth = surplusInvest && p.surplusAccount==="roth";
+    const surplusToHsa  = surplusInvest && p.surplusAccount==="hsa";
+    const surplusToBrok = surplusInvest && p.surplusAccount==="brokerage";
+    const surplusToSav  = surplusInvest && p.surplusAccount==="savings";
+
+    // Calculate year-specific surplus: income minus all active expenses and debts
+    const yearlySurplus = (yrs) => {
+      if(!surplusInvest) return { ret:0, roth:0, hsa:0, brok:0, sav:0 };
+      const sal = p.salary * Math.pow(1+p.salaryGrowth/100, yrs);
+      const trad = sal*(p.trad401kPct/100);
+      const roth401 = sal*(p.roth401kPct/100);
+      const empM2 = sal*(p.empMatchPct/100);
+      const empB2 = sal*(p.empBasePct/100);
+      const hcPrem = p.hcPremiumPerPaycheck*PAYCHECKS_YR;
+      const preTax2 = trad+p.hsaAnnual+hcPrem;
+      const agi2 = Math.max(0, sal-preTax2);
+      const taxable2 = Math.max(0, agi2-(mfj ? STD_DED_MFJ : STD_DED_SINGLE));
+      const { tax: fedTax2 } = calcTax(taxable2, mfj);
+      const fica2 = sal*FICA_RATE;
+      const state2 = agi2*(p.stateTax/100);
+      const take2 = (sal-preTax2-roth401-fica2-fedTax2-state2)/12;
+      const totalInc2 = take2 + (p.hasVA?p.vaMonthly:0) + (p.spouseIncome/12);
+      // Debt payments still active this year
+      const d1Active = p.debt1Bal>0 && yrs*12 < debt1.months ? p.debt1Monthly : 0;
+      const d2Active = p.debt2Bal>0 && yrs*12 < debt2.months ? p.debt2Monthly : 0;
+      const d3Active = p.debt3Bal>0 && yrs*12 < debt3.months ? p.debt3Monthly : 0;
+      const mortActive = p.mortTotal; // rent or mortgage
+      const totalExp2 = mortActive + livingMonthly + d1Active + d2Active + d3Active;
+      const flow = Math.max(0, totalInc2 - totalExp2);
+      return {
+        ret:  surplusToRet  ? flow*12 : 0,
+        roth: surplusToRoth ? flow*12 : 0,
+        hsa:  surplusToHsa  ? flow*12 : 0,
+        brok: surplusToBrok ? flow*12 : 0,
+        sav:  surplusToSav  ? flow*12 : 0,
+      };
+    };
+
+    /* ── Healthcare at retirement — uses component-level makeHcMonthly ── */
+    const hcMonthly = hcMonthlyP;
+
+    /* ── FIRE number ── */
+    const ytt       = Math.max(0, p.retAge-p.curAge);
+    const infMult   = Math.pow(1+p.inflation/100, ytt);
+    const housingInflMult = Math.pow(1+p.inflation/100*1.5, ytt);
+    // Homeowners: propTax+insurance inflates at 1.5x rate; renters: no propTax, homeInsurance already in livingMonthly at standard rate
+    const baseMonthlyNoHousing = p.hasMortgage
+      ? livingMonthly - p.propTax - p.homeInsurance
+      : livingMonthly - p.homeInsurance; // renters insurance stays in living expenses
+    const livInfl = p.hasMortgage
+      ? (baseMonthlyNoHousing*12*(p.retRatio/100)*infMult) + (p.propTax+p.homeInsurance)*12*housingInflMult*(p.retRatio/100)
+      : baseMonthlyNoHousing*12*(p.retRatio/100)*infMult;
+    const extInfl   = p.retExtras*12*infMult;
+    const mortAtRet = p.hasMortgage ? ((CY+ytt)<=p.mortPayoff ? p.mortTotal*12 : 0) : p.mortTotal*12;
+    const hcAtRet   = hcMonthly(p.retAge,0)*12;
+    const vaAtRet   = p.hasVA ? p.vaMonthly*12*Math.pow(1+p.vaCola/100,ytt) : 0;
+    const ssAtRet   = p.hasSS&&p.ssAge<=p.retAge ? p.ssMonthly*12*infMult : 0;
+    const guaranteedIncome = vaAtRet+ssAtRet;
+    const totalNeed = livInfl+extInfl+mortAtRet+hcAtRet;
+    const drawNeeded= Math.max(0, totalNeed-guaranteedIncome);
+    // Duration-adjusted SWR — longer retirement needs lower withdrawal rate
+    const retirementYears = p.planAge - p.retAge;
+    const durationSWR = retirementYears >= 50 ? Math.min(p.swr, 3.0) :
+                        retirementYears >= 45 ? Math.min(p.swr, 3.25) :
+                        retirementYears >= 40 ? Math.min(p.swr, 3.5) :
+                        retirementYears >= 35 ? Math.min(p.swr, 3.75) :
+                        p.swr;
+    const fireNum     = drawNeeded/(durationSWR/100);
+    // Convert to today's dollars so the number is comparable across retirement ages
+    const fireNumReal = fireNum/infMult;  // what you'd need to have TODAY
+    // For pre-55 retirement, portfolio draws incur ~30% effective loss (10% penalty + taxes)
+    // So you need more portfolio to net the same income — adjust FIRE number upward
+    const earlyWithdrawalPenalty = p.retAge < 55 ? PRE55_PENALTY : 0;
+    const fireNumRealAdj = earlyWithdrawalPenalty > 0
+      ? fireNumReal * (1 + earlyWithdrawalPenalty * PRE55_PARTIAL) // partial adjustment since some funds (brokerage/Roth) are accessible
+      : fireNumReal;
+    const vaEquiv   = p.hasVA ? (vaAtRet/infMult)/(p.swr/100) : 0;  // today's dollars for apples-to-apples with fireNumReal
+    const ssEquiv   = p.hasSS ? (ssAtRet/infMult)/(p.swr/100) : 0;
+
+    /* ── Simulate portfolio — delegates to shared runSimulation engine ── */
+    const simulate = retAge => runSimulation(
+      p, livingMonthly, hcMonthly, yearlySurplus,
+      { d1: debt1.months, d2: debt2.months, d3: debt3.months },
+      retAge
+    );
+
+    /* ── Sweep FIRE ages ── */
+    let earliest=null;
+    const sweep=[];
+    for(let ra=40;ra<=72;ra++){
+      const { ok,final }=simulate(ra);
+
+      // Calculate projected portfolio at this retirement age
+      let projAtAge=totalInvested;
+      const yrsToRa = Math.max(0, ra-p.curAge);
+      for(let i=0;i<yrsToRa;i++){
+        const yr=CY+i, sal=p.salary*Math.pow(1+p.salaryGrowth/100,i);
+        const loanRepay=(p.debt3Bal>0&&i*12<debt3.months)?p.debt3Monthly*12:0;
+        const surplusY = yearlySurplus(i);
+        projAtAge=projAtAge*(1+p.growth/100)+sal*((p.trad401kPct+p.roth401kPct+p.empMatchPct+p.empBasePct)/100)+hsaForYr(yr)+p.rothIRAContrib+p.monthlyBrokerageContrib*12+loanRepay+surplusY.ret+surplusY.brok;
+      }
+
+      // Calculate FIRE number at this specific retirement age
+      const yrsToRaVal = Math.max(0, ra-p.curAge);
+      const infMultRa = Math.pow(1+p.inflation/100, yrsToRaVal);
+      const retYrsRa = p.planAge - ra;
+      const swrRa = retYrsRa >= 50 ? Math.min(p.swr,3.0) : retYrsRa >= 45 ? Math.min(p.swr,3.25) : retYrsRa >= 40 ? Math.min(p.swr,3.5) : retYrsRa >= 35 ? Math.min(p.swr,3.75) : p.swr;
+      const vaAtRa = p.hasVA ? p.vaMonthly*12*Math.pow(1+p.vaCola/100,yrsToRaVal) : 0;
+      const ssAtRa = p.hasSS&&p.ssAge<=ra ? p.ssMonthly*12*infMultRa : 0;
+      const baseRa = p.hasMortgage ? (livingMonthly-p.propTax-p.homeInsurance) : (livingMonthly-p.homeInsurance);
+      const livInflRa = p.hasMortgage
+        ? baseRa*12*(p.retRatio/100)*infMultRa + (p.propTax+p.homeInsurance)*12*Math.pow(1+p.inflation/100*1.5,yrsToRaVal)*(p.retRatio/100)
+        : baseRa*12*(p.retRatio/100)*infMultRa;
+      const extInflRa = p.retExtras*12*infMultRa;
+      const mortAtRa = p.hasMortgage ? ((CY+yrsToRaVal)<=p.mortPayoff ? p.mortTotal*12 : 0) : p.mortTotal*12;
+      const hcAtRa = hcMonthly(ra,0)*12;
+      const drawRa = Math.max(0, livInflRa+extInflRa+mortAtRa+hcAtRa-vaAtRa-ssAtRa);
+      const fireNumRa = drawRa / (swrRa/100);
+      const penaltyAdj = ra < 55 ? 1 + PRE55_PENALTY*PRE55_PARTIAL : 1;
+      const fireNumRaReal = (fireNumRa/infMultRa) * penaltyAdj;
+      const projRaReal = projAtAge/infMultRa;
+
+      // Genuinely feasible = projected portfolio MEETS the FIRE number for that age
+      // AND simulation confirms it lasts to plan age (running out after plan age is acceptable)
+      const meetsFIRE = projRaReal >= fireNumRaReal;
+      const genuinelyOk = ok && meetsFIRE;
+      if(genuinelyOk&&!earliest) earliest=ra;
+      sweep.push({ age:ra, ok:genuinelyOk, final });
+    }
+    const { data:chart }=simulate(p.retAge);
+
+    /* ── Projected balance at target ── */
+    let proj=totalInvested, projSav=0;
+    for(let i=0;i<ytt;i++){
+      const yr=CY+i, sal=p.salary*Math.pow(1+p.salaryGrowth/100,i);
+      const loanRepay=(p.debt3Bal>0&&i*12<debt3.months)?p.debt3Monthly*12:0;
+      const surplusYP = yearlySurplus(i);
+      proj=proj*(1+p.growth/100)+sal*((p.trad401kPct+p.roth401kPct+p.empMatchPct+p.empBasePct)/100)+hsaForYr(yr)+p.rothIRAContrib+p.monthlyBrokerageContrib*12+loanRepay+(surplusYP.ret||0)+(surplusYP.roth||0)+(surplusYP.hsa||0)+(surplusYP.brok||0);
+      projSav=projSav*(1+RATE_SAVINGS/100)+(surplusYP.sav||0);
+    }
+    proj += projSav;
+    const projReal    = proj/infMult;     // projected portfolio in today's purchasing power
+    const pctFunded = fireNumRealAdj>0 ? Math.min(200,(totalInvested/fireNumRealAdj)*100) : 100;
+    const surplus   = projReal-fireNumRealAdj; // both in today's dollars
+
+    /* ── Monthly draw available ── */
+    const monthlyDraw = proj * durationSWR / 100 / 12;
+
+    const rothIRAFiveYearSatisfied = (CY - p.rothIRAOpenYear) >= 5;
+    const rule55Applies = p.retAge >= 55;
+    return {
+      rothIRAFiveYearSatisfied, rule55Applies,
+      debt1, debt2, debt3, mort,
+      totalNonMortDebt, monthlyDebtPayments, debtFreeYear,
+      totalRetirement, totalInvested, totalLiquid, trad401kTotal, roth401kTotal, rothFraction, withdrawalTaxRate,
+      tradAmt, rothAmt, empM, empB, empTotal, annualToAccounts,
+      hcPremAnnual, preTax, agi, fedTax, fica, stateTaxAmt,
+      takeHome, vaMonthly, totalIncome,
+      livingMonthly, mortMonthly, totalExp, cashFlow,
+      hcAtRet, mortAtRet, vaAtRet, ssAtRet, guaranteedIncome, vaEquiv, ssEquiv,
+      totalNeed, drawNeeded, fireNum, fireNumReal, fireNumRealAdj, projReal, durationSWR, retirementYears, pctFunded, proj, surplus,
+      earliest, sweep, chart, ytt, infMult, livInfl, monthlyDraw,
+    };
+  }, [p]);
+
+  const [page, setPage] = useState(1);
+  const [scenarioIdx, setScenarioIdx] = useState(null);
+  const [scenarioRetAge, setScenarioRetAge] = useState(null); // for interactive retirement age scenario
+
+  /* ══════ RENDER ══════ */
+
+  /* wizard — shown until onboarded */
+  if(!onboarded) return (
+    <div style={{ ...S.body, display:"flex", flexDirection:"column", minHeight:"100vh" }}>
+      <div style={{ background:"#0f1117", borderBottom:`1px solid ${C.border}`, padding:"14px 28px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <div style={{ fontFamily:"'Cormorant Garamond',serif", fontSize:20, color:C.gold }}>Life Calculator</div>
+        {step>1&&(
+          <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+            <div style={{ fontSize:10, color:C.muted, letterSpacing:"0.08em" }}>STEP {step-1} OF {TOTAL_STEPS-1}</div>
+            <div style={{ width:120, height:3, background:C.border, borderRadius:2, overflow:"hidden" }}>
+              <div style={{ height:"100%", width:`${((step-1)/(TOTAL_STEPS-1))*100}%`, background:`linear-gradient(90deg,${C.cyanDim},${C.cyan})`, borderRadius:2, transition:"width 0.3s" }}/>
+            </div>
+          </div>
+        )}
+      </div>
+      <div style={{ flex:1, overflowY:"auto", padding:"32px 20px" }}>
+        <div style={{ width:"100%", maxWidth:560, margin:"0 auto" }}>
+          {getWizStep(step)}
+        </div>
+      </div>
+      {step>1&&(
+        <div style={{ padding:"20px 40px", borderTop:`1px solid ${C.border}`, display:"flex", justifyContent:"space-between", alignItems:"center", maxWidth:560, margin:"0 auto", width:"100%" }}>
+          <WizBtn label="← Back" onClick={()=>setStep(s=>Math.max(1,s-1))} secondary/>
+          <WizBtn
+            label={step===TOTAL_STEPS?"See My Results →":"Next →"}
+            onClick={()=>{ if(step===TOTAL_STEPS) setOnboarded(true); else setStep(s=>s+1); }}
+          />
+        </div>
+      )}
+    </div>
+  );
+
+  /* ── PAGE NAV ── */
+  const NavBtn = ({ n, label, icon }) => (
+    <button onClick={()=>setPage(n)} style={{
+      padding:"8px 20px", borderRadius:8, border:"none", cursor:"pointer",
+      fontFamily:"'Outfit',sans-serif", fontSize:12, fontWeight:600, letterSpacing:"0.04em",
+      background: page===n ? `linear-gradient(135deg,${C.cyanDim},${C.cyan})` : C.card,
+      color: page===n ? "#000" : C.dim,
+      border: page===n ? "none" : `1px solid ${C.border}`,
+      transition:"all 0.2s",
+    }}>{icon} {label}</button>
+  );
+
+  /* ── EXPORT / IMPORT ── */
+  const exportCSV = () => {
+    // Section 1 — inputs
+    const inputRows = [['key','value'], ...Object.entries(p).map(([k,v])=>[k,v])];
+    // Section 2 — simulated projection
+    const projRows = [['',''],['age','portfolio_balance'], ...C2.chart.map(d=>[d.age, d.bal])];
+    const allRows = [...inputRows, ...projRows];
+    const csv = allRows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type:'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `life-calculator-${CY}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importCSV = (e) => {
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const lines = ev.target.result.trim().split('\n').slice(1); // skip header
+        const imported = {};
+        lines.forEach(line => {
+          const [rawK, rawV] = line.split(',').map(s=>s.replace(/^"|"$/g,'').replace(/""/g,'"'));
+          if(rawK && rawV !== undefined) {
+            const num = parseFloat(rawV);
+            // Booleans stored as "true"/"false"
+            if(rawV==='true') imported[rawK] = true;
+            else if(rawV==='false') imported[rawK] = false;
+            else if(!isNaN(num) && rawV.trim()!=='') imported[rawK] = num;
+            else imported[rawK] = rawV;
+          }
+        });
+        // Merge with defaults so missing keys don't break anything
+        setP({ ...DEFAULTS, ...imported });
+        setOnboarded(true);
+      } catch(err) {
+        alert('Could not read CSV. Make sure it was exported from Life Calculator.');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = ''; // reset so same file can be re-imported
+  };
+
+  /* ── SHARED HEADER ── */
+  const Header = () => (
+    <div style={{ ...S.header, top:0 }}>
+      <div style={{ maxWidth:1200, margin:"0 auto" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:12 }}>
+          <div>
+            <div style={{ ...S.serif, fontSize:24, fontWeight:700, color:C.text, lineHeight:1 }}>
+              Life <span style={{ color:C.cyan }}>Calculator</span>
+            </div>
+            <div style={{ fontSize:10, color:C.muted, marginTop:2 }}>Retirement & Financial Independence · {CY}</div>
+          </div>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
+            <NavBtn n={1} icon="🎯" label="Overview"/>
+            <NavBtn n={2} icon="📈" label="Projection"/>
+            <NavBtn n={3} icon="⚙️" label="Variables"/>
+            <button onClick={()=>{setStep(2);setOnboarded(false);}} style={{ padding:"8px 14px", borderRadius:8, border:`1px solid ${C.border}`, background:"transparent", color:C.muted, fontSize:11, cursor:"pointer", fontFamily:"'Outfit',sans-serif" }}>
+              ✏️ Edit
+            </button>
+            <button onClick={exportCSV} style={{ padding:"8px 14px", borderRadius:8, border:`1px solid ${C.border}`, background:"transparent", color:C.muted, fontSize:11, cursor:"pointer", fontFamily:"'Outfit',sans-serif" }}>
+              ⬇ Export
+            </button>
+            <label style={{ padding:"8px 14px", borderRadius:8, border:`1px solid ${C.border}`, background:"transparent", color:C.muted, fontSize:11, cursor:"pointer", fontFamily:"'Outfit',sans-serif" }}>
+              ⬆ Import
+              <input type="file" accept=".csv" onChange={importCSV} style={{ display:"none" }}/>
+            </label>
+          </div>
+        </div>
+        {/* Progress bar */}
+        <div style={{ marginTop:10, height:3, background:C.border, borderRadius:3, overflow:"hidden" }}>
+          <div style={{ height:"100%", width:`${Math.min(100,C2.pctFunded)}%`, background:`linear-gradient(90deg,${C.cyanDim},${C.cyan})`, borderRadius:3 }}/>
+        </div>
+      </div>
+    </div>
+  );
+
+  /* ════════════════════════════════════
+     PAGE 1 — OVERVIEW
+  ════════════════════════════════════ */
+  const Page1 = () => {
+    const onTrack = C2.projReal >= C2.fireNumRealAdj;
+    const maxDraw = C2.monthlyDraw;
+
+    // Solve for required extra monthly contribution to retire at target age
+    const solveForContrib = () => {
+      const target = C2.fireNumRealAdj * C2.infMult; // future dollars needed
+      const current = C2.proj;
+      if(current >= target) return 0;
+      const gap = target - current;
+      const r = p.growth / 100;
+      const n = C2.ytt;
+      if(n <= 0 || r <= 0) return gap / 12;
+      return gap / (((Math.pow(1+r,n)-1)/r));
+    };
+    const extraMonthlyNeeded = Math.max(0, solveForContrib());
+
+    return (
+      <div style={{ maxWidth:1200, margin:"0 auto", padding:"24px 20px" }}>
+
+        {/* ── HEADLINE MESSAGE ── */}
+        <div style={{ ...S.card, marginBottom:20, padding:"24px 28px", border:`1px solid ${onTrack?C.green:C2.earliest?"rgba(240,160,80,0.4)":"rgba(242,86,112,0.4)"}`, background:onTrack?"rgba(34,199,122,0.05)":C2.earliest?"rgba(240,160,80,0.04)":"rgba(242,86,112,0.04)" }}>
+          {onTrack ? (
+            <div>
+              <div style={{ fontSize:20, fontWeight:700, color:C.green, marginBottom:6 }}>
+                ✅ Your portfolio supports <span style={{ ...S.mono }}>{$(C2.monthlyDraw)}/month</span> through retirement.
+              </div>
+              <div style={{ fontSize:12, color:C.muted }}>
+                Based on {C2.durationSWR}% withdrawal rate · {C2.retirementYears}-year retirement · retiring at age {p.retAge}
+              </div>
+            </div>
+          ) : C2.earliest ? (
+            <div>
+              <div style={{ fontSize:20, fontWeight:700, color:C.orange, marginBottom:6 }}>
+                ⚠️ At your current pace you can retire at <span style={{ ...S.mono }}>age {C2.earliest}</span>.
+                {extraMonthlyNeeded > 0 && <span> To retire at <span style={{ ...S.mono }}>age {p.retAge}</span> you need <span style={{ ...S.mono, color:C.cyan }}>{$(extraMonthlyNeeded)}/month</span> more in contributions.</span>}
+              </div>
+              <div style={{ fontSize:12, color:C.muted }}>
+                Shortfall of {$k(Math.abs(C2.surplus))} in today's dollars at age {p.retAge} · Earliest feasible age: {C2.earliest} ({toY(C2.earliest,p.curAge)})
+              </div>
+            </div>
+          ) : (
+            <div>
+              <div style={{ fontSize:20, fontWeight:700, color:C.red, marginBottom:6 }}>
+                📈 Increase contributions or adjust your retirement age to find a feasible plan.
+              </div>
+              <div style={{ fontSize:12, color:C.muted }}>
+                No retirement age between 40–72 is currently feasible with these inputs.
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ── STAT CARDS ── */}
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))", gap:12, marginBottom:20 }}>
+          {[
+            { label:"FIRE Number", value:$k(C2.fireNumRealAdj), sub:"Today's dollars needed", color:C.gold, icon:"🎯" },
+            { label:"Projected at "+p.retAge, value:$k(C2.projReal), sub:"Today's dollars", color:onTrack?C.green:C.red, icon:"💼" },
+            { label:onTrack?"Surplus":"Shortfall", value:(C2.surplus>=0?"+":"")+$k(C2.surplus), sub:"Today's dollars", color:C2.surplus>=0?C.green:C.red, icon:C2.surplus>=0?"✅":"⚠️" },
+            { label:"Portfolio draw", value:$(C2.monthlyDraw)+"/mo", sub:`At ${C2.durationSWR}% SWR · age ${p.retAge}`, color:C.cyan, icon:"💵" },
+          ].map(({ label,value,sub,color,icon })=>(
+            <div key={label} style={{ ...S.card, textAlign:"center", padding:"18px 14px" }}>
+              <div style={{ fontSize:20, marginBottom:5 }}>{icon}</div>
+              <div style={{ fontSize:10, letterSpacing:"0.1em", textTransform:"uppercase", color:C.muted, marginBottom:4 }}>{label}</div>
+              <div style={{ ...S.mono, fontSize:19, fontWeight:700, color, lineHeight:1.1 }}>{value}</div>
+              <div style={{ fontSize:10, color:C.muted, marginTop:3 }}>{sub}</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+          <div>
+            {/* ── FIRE FEASIBILITY GRID ── */}
+            <div style={S.card}>
+              <Head title="⚡ FIRE FEASIBILITY BY RETIREMENT AGE" sub={`Click any age to set as target · Currently: Age ${p.retAge}`}/>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:8 }}>
+                {C2.sweep.map(f=>{
+                  const isTgt=f.age===p.retAge, isFire=f.age===C2.earliest;
+                  return (
+                    <div key={f.age} onClick={()=>{ const newP={...p,retAge:f.age}; setP(newP); }}
+                      style={{ width:52, textAlign:"center", padding:"8px 4px", borderRadius:8, cursor:"pointer",
+                        background:isTgt?"rgba(244,185,66,0.15)":isFire?"rgba(0,238,255,0.1)":f.ok?"rgba(34,199,122,0.07)":"rgba(242,86,112,0.07)",
+                        border:`1px solid ${isTgt?C.gold:isFire?C.cyan:f.ok?C.green:C.red}`,
+                        transition:"all 0.15s" }}>
+                      <div style={{ ...S.mono, fontSize:13, fontWeight:700, color:isTgt?C.gold:isFire?C.cyan:f.ok?C.green:C.red }}>{f.age}</div>
+                      <div style={{ fontSize:8, color:isFire?C.cyan:isTgt?C.gold:f.ok?C.green:C.red, marginTop:1 }}>
+                        {isFire?"FIRE":isTgt?"TARGET":f.ok?"✓":"✗"}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize:10, color:C.muted }}>Green = sustains to age {p.planAge} · Red = depleted before then</div>
+            </div>
+
+            {/* ── AGE SNAPSHOT ── */}
+            <div style={S.card}>
+              <Head title={`📊 AGE ${p.retAge} SNAPSHOT (${toY(p.retAge,p.curAge)})`} sub="All figures in today's dollars"/>
+              <KV k={<Term>FIRE Number</Term>} v={$k(C2.fireNumRealAdj)} vc={C.gold} bold/>
+              <KV k="Projected portfolio" v={$k(C2.projReal)} vc={onTrack?C.green:C.red} bold/>
+              <KV k="Surplus / deficit" v={(C2.surplus>=0?"+":"")+$k(C2.surplus)} vc={C2.surplus>=0?C.green:C.red} bold/>
+              <KV k={<><Term>SWR</Term> ({C2.retirementYears}-yr retirement)</>} v={`${C2.durationSWR}% ${C2.durationSWR<p.swr?"(auto-adjusted)":"(your setting)"}`} vc={C2.durationSWR<p.swr?C.orange:C.cyan}/>
+              <KV k="Annual expenses at retirement" v={$(C2.totalNeed)} vc={C.muted}/>
+              <KV k="Guaranteed income" v={$(C2.guaranteedIncome)+"/yr"} vc={C.green}/>
+              <KV k="Portfolio draw needed" v={$(C2.drawNeeded)+"/yr"} vc={C.orange}/>
+              <KV k="Max safe monthly draw" v={$(maxDraw)} vc={onTrack?C.green:C.red} bold/>
+              <div style={{ marginTop:14 }}>
+                <Slider label="🎯 Target Retirement Age" value={p.retAge} onChange={v=>setP({...p,retAge:v})} min={40} max={70} fmt={v=>`Age ${v} · ${toY(v,p.curAge)}`}/>
+              </div>
+            </div>
+
+            {/* ── MONTHLY CASH FLOW ── */}
+            <div style={S.card}>
+              <Head title="💵 TODAY'S CASH FLOW"/>
+              <KV k="Monthly take-home" v={$(C2.takeHome)} vc={C.green}/>
+              {p.hasVA&&<KV k="Non-taxable income" v={$(C2.vaMonthly)+"/mo"} vc={C.green}/>}
+              {p.spouseIncome>0&&<KV k="Spouse income" v={$(p.spouseIncome/12)+"/mo"} vc={C.green}/>}
+              <KV k="Total monthly income" v={$(C2.totalIncome)} vc={C.green} bold/>
+              <div style={{ height:1, background:C.border, margin:"8px 0" }}/>
+              <KV k={p.hasMortgage?"Mortgage":"Rent"} v={`(${$(C2.mortMonthly)})`} vc={C.red}/>
+              <KV k="Living expenses" v={`(${$(C2.livingMonthly)})`} vc={C.muted}/>
+              {C2.monthlyDebtPayments>0&&<KV k="Debt payments" v={`(${$(C2.monthlyDebtPayments)})`} vc={C.orange}/>}
+              <KV k="NET CASH FLOW" v={$(C2.cashFlow)} vc={C2.cashFlow>=0?C.cyan:C.red} bold/>
+            </div>
+
+            {/* ── SURPLUS ALLOCATION ── */}
+            {C2.cashFlow>0&&(
+              <div style={{ ...S.card, border:`1px solid ${p.surplusAction==="invest"?"rgba(0,238,255,0.3)":C.border}` }}>
+                <Head title="💸 WHAT DO YOU WANT TO DO WITH YOUR SURPLUS?" sub={`You have ${$(C2.cashFlow)}/mo left after all expenses`}/>
+                <div style={{ display:"flex", gap:8, marginBottom:14 }}>
+                  {[
+                    { v:"spend", label:"Spend it", icon:"🛍️", note:"Not included in projections" },
+                    { v:"invest", label:"Invest it", icon:"📈", note:"Added to your projection" },
+                  ].map(opt=>(
+                    <button key={opt.v} onClick={()=>setP({...p, surplusAction:opt.v})} style={{
+                      flex:1, padding:"12px 8px", borderRadius:8, cursor:"pointer", textAlign:"center",
+                      fontFamily:"'Outfit',sans-serif",
+                      background: p.surplusAction===opt.v ? (opt.v==="invest"?"rgba(0,238,255,0.1)":"rgba(244,185,66,0.08)") : "#07101e",
+                      border: `1px solid ${p.surplusAction===opt.v ? (opt.v==="invest"?C.cyan:C.gold) : C.border}`,
+                      transition:"all 0.2s",
+                    }}>
+                      <div style={{ fontSize:18, marginBottom:4 }}>{opt.icon}</div>
+                      <div style={{ fontSize:12, fontWeight:600, color:p.surplusAction===opt.v?(opt.v==="invest"?C.cyan:C.gold):C.dim }}>{opt.label}</div>
+                      <div style={{ fontSize:10, color:C.muted, marginTop:2 }}>{opt.note}</div>
+                    </button>
+                  ))}
+                </div>
+
+                {p.surplusAction==="invest"&&(
+                  <div>
+                    <div style={{ fontSize:11, color:C.muted, marginBottom:8 }}>Where should it go?</div>
+                    <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                      {[
+                        { v:"brokerage", label:"Taxable Brokerage", icon:"📊", note:`${p.growth}% growth · LTCG rates · most flexible` },
+                        { v:"roth",      label:"Roth IRA",           icon:"🔵", note:`${p.growth}% growth · Max ${$(rothIRALimit)}/yr · tax-free` },
+                        { v:"hsa",       label:"HSA",                icon:"🏥", note:`${p.growth}% growth · triple tax advantage` },
+                        { v:"401k",      label:"Extra 401k",         icon:"🏦", note:`${p.growth}% growth · pre-tax · reduces MAGI` },
+                        { v:"savings",   label:"Savings Account",    icon:"💵", note:`${RATE_SAVINGS}% growth · HYSA · no market risk` },
+                      ].map(opt=>(
+                        <button key={opt.v} onClick={()=>setP({...p, surplusAccount:opt.v})} style={{
+                          display:"flex", alignItems:"center", gap:12, padding:"10px 14px",
+                          borderRadius:8, cursor:"pointer", textAlign:"left",
+                          fontFamily:"'Outfit',sans-serif",
+                          background: p.surplusAccount===opt.v ? "rgba(0,238,255,0.07)" : "#07101e",
+                          border: `1px solid ${p.surplusAccount===opt.v ? C.cyan : C.border}`,
+                          transition:"all 0.2s", width:"100%",
+                        }}>
+                          <span style={{ fontSize:18 }}>{opt.icon}</span>
+                          <div style={{ flex:1 }}>
+                            <div style={{ fontSize:12, fontWeight:600, color:p.surplusAccount===opt.v?C.cyan:C.dim }}>{opt.label}</div>
+                            <div style={{ fontSize:10, color:C.muted }}>{opt.note}</div>
+                          </div>
+                          {p.surplusAccount===opt.v&&<span style={{ color:C.cyan, fontSize:14 }}>✓</span>}
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ marginTop:12, padding:"10px 12px", background:"rgba(0,238,255,0.05)", borderRadius:8, border:`1px solid rgba(0,238,255,0.15)` }}>
+                      <KV k="Today's monthly surplus" v={$(C2.cashFlow)} vc={C.cyan} bold/>
+                      <KV k="Annual (today)" v={$(C2.cashFlow*12)} vc={C.cyan}/>
+                      {C2.totalNonMortDebt>0&&<KV k={"After debts clear (~"+C2.debtFreeYear+")"} v={$(C2.cashFlow+C2.monthlyDebtPayments)+"/mo"} vc={C.green} bold/>}
+                      <div style={{ fontSize:10, color:C.muted, marginTop:6, lineHeight:1.5 }}>
+                        Surplus automatically increases as debts pay off — each freed payment is reinvested in the projection.
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {p.surplusAction==="spend"&&(
+                  <div style={{ padding:"10px 12px", background:"rgba(244,185,66,0.04)", borderRadius:8, border:`1px solid rgba(244,185,66,0.15)`, fontSize:11, color:C.muted, lineHeight:1.6 }}>
+                    {$k(C2.cashFlow*12*((Math.pow(1+p.growth/100,C2.ytt)-1)/(p.growth/100)))} would be added to your projected portfolio if invested instead.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div>
+            {/* ── KEY INSIGHTS ── */}
+            {C2.cashFlow>0&&(
+              <div style={S.card}>
+                {(()=>{
+                  const surplus = C2.cashFlow; // monthly
+                  const retAge = p.retAge;
+                  const rule55 = retAge >= 55 && retAge < 59.5;
+                  const mid    = retAge >= 59.5 && retAge < 65;
+                  const at65   = retAge >= 65;
+                  const early  = retAge < 55;
+
+                  // Current annual contributions
+                  const cur401k    = p.salary*(p.trad401kPct+p.roth401kPct)/100/12; // monthly
+                  const curMatch   = p.salary*p.empMatchPct/100/12;
+                  const matchGap   = Math.max(0, curMatch - cur401k); // how much more needed to capture full match
+                  const hsaGap     = Math.max(0, (hsaLimitAnnual - p.hsaAnnual)/12);
+                  const rothIRAGap = Math.max(0, (rothIRALimit - p.rothIRAContrib)/12);
+                  const k401kGap   = Math.max(0, (k401kLimit - p.salary*(p.trad401kPct+p.roth401kPct)/100)/12);
+
+                  // Build allocation steps based on retirement age strategy
+                  const steps = [];
+                  let remaining = surplus;
+                  const alloc = (label, gap, color, note) => {
+                    if(remaining <= 0) return;
+                    const amt = Math.min(remaining, gap);
+                    if(amt <= 0) return;
+                    steps.push({ label, amt, color, note, full: amt >= gap });
+                    remaining -= amt;
+                  };
+
+                  if(matchGap > 0) alloc("Increase 401k to capture full match", matchGap, C.green, "100% instant return");
+
+                  if(at65) {
+                    alloc(`Max HSA (${$(hsaLimitAnnual)}/yr)`, hsaGap, C.purple, "Triple tax advantage");
+                    alloc(`Max Roth IRA (${$(rothIRALimit)}/yr)`, rothIRAGap, C.cyan, "Tax-free forever");
+                    alloc(`Max 401k (${$(k401kLimit)}/yr)`, k401kGap, C.gold, "Pre-tax growth");
+                  } else if(mid) {
+                    alloc(`Max Roth IRA (${$(rothIRALimit)}/yr)`, rothIRAGap, C.cyan, "Tax-free, accessible");
+                    alloc(`HSA (${$(hsaLimitAnnual)}/yr)`, hsaGap, C.purple, "Pre-Medicare medical costs");
+                    alloc(`Max 401k (${$(k401kLimit)}/yr)`, k401kGap, C.gold, "Full access at 59½");
+                  } else if(rule55) {
+                    alloc(`Roth 401k to 15% total`, Math.max(0, p.salary*0.15/12-cur401k-curMatch), C.cyan, "Rule of 55 bridge");
+                    alloc(`HSA (${$(hsaLimitAnnual)}/yr)`, hsaGap, C.purple, "Medical costs pre-Medicare");
+                    alloc(`Roth IRA (${$(rothIRALimit)}/yr)`, rothIRAGap, C.cyan, "Supplemental");
+                    alloc(`Additional 401k room`, Math.max(0, k401kGap - Math.max(0, p.salary*0.15/12-cur401k-curMatch)), C.gold, "Beyond 15%");
+                  } else {
+                    alloc(`Max Roth IRA (${$(rothIRALimit)}/yr)`, rothIRAGap, C.cyan, "Most accessible pre-59½");
+                    alloc("Taxable brokerage", surplus*0.5, C.gold, "Primary liquid bridge");
+                    alloc(`HSA (${$(hsaLimitAnnual)}/yr)`, hsaGap, C.purple, "Medical costs only");
+                    alloc(`401k beyond match`, k401kGap, C.muted, "Locked until 55+ or 59½");
+                  }
+
+                  if(remaining > 0) steps.push({ label:"Additional brokerage / savings", amt:remaining, color:C.muted, note:"Overflow — no limits", full:false });
+
+                  return <>
+                    <Head title="📋 SUGGESTED MONTHLY ALLOCATION" sub={`Based on your ${$(surplus)}/mo surplus and age-${retAge} strategy`}/>
+                    {steps.map((s,i)=>(
+                      <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 10px", borderRadius:6, marginBottom:4, background:"#07101e", border:`1px solid ${s.full?s.color:C.border}` }}>
+                        <div>
+                          <div style={{ fontSize:12, color:s.full?s.color:C.dim, fontWeight:s.full?600:400 }}>{s.label}</div>
+                          <div style={{ fontSize:10, color:C.muted }}>{s.note}{s.full?" · fully funded":""}</div>
+                        </div>
+                        <div style={{ ...S.mono, fontSize:14, color:s.color, fontWeight:700 }}>{$(Math.round(s.amt))}<span style={{ fontSize:9, color:C.muted }}>/mo</span></div>
+                      </div>
+                    ))}
+                    {!C2.projReal>=C2.fireNumRealAdj&&(
+                      <div style={{ fontSize:10, color:C.orange, marginTop:8, lineHeight:1.5 }}>
+                        ⚠ Even fully investing your surplus, you're projected short. Consider increasing income, reducing retirement expenses, or adjusting your retirement age.
+                      </div>
+                    )}
+                  </>;
+                })()}
+              </div>
+            )}
+
+            {/* ── PRE-65 HEALTHCARE PLAN ── */}
+            {p.retAge < 65 && (
+              <div style={{ ...S.card, border:`1px solid rgba(242,86,112,0.3)` }}>
+                <Head title="🏥 PRE-65 HEALTHCARE — YOU NEED A PLAN" color={C.red}
+                  sub={`${65-p.retAge} years between retirement and Medicare eligibility`}/>
+                <div style={{ fontSize:11, color:C.muted, lineHeight:1.7, marginBottom:12 }}>
+                  The HSA is a cost-sharing tool — it is not a health plan. You need a premium-paying plan first, then the HSA covers what the plan doesn't.
+                </div>
+                {[
+                  {
+                    title: p.hasVA&&p.vaHealthVet ? "✓ VA Healthcare (Priority Group 2)" : "VA Healthcare",
+                    body: p.hasVA&&p.vaHealthVet
+                      ? `50%+ rating qualifies you for Priority Group 2 — comprehensive coverage at very low or no cost. This is your best option and eliminates most pre-65 healthcare risk.`
+                      : `If you have a 50%+ disability rating, VA healthcare at Priority Group 2 is free or near-free. This single benefit can save $15,000–25,000/yr pre-65. Check your eligibility.`,
+                    color: p.hasVA&&p.vaHealthVet ? C.green : C.orange,
+                    icon: "🎖️"
+                  },
+                  {
+                    title: "ACA Marketplace Plan (primary option for most)",
+                    body: `ACA plans cover pre-existing conditions with no underwriting. Cost depends heavily on your taxable income — VA disability is excluded from MAGI. At low retirement income, subsidies can make premiums $0–300/mo. Enter a realistic premium in Variables → Healthcare. HSA covers your deductible, copays, prescriptions, dental, and vision on top of the plan.`,
+                    color: C.cyan,
+                    icon: "🏛️"
+                  },
+                  {
+                    title: "HSA — covers costs ON TOP of your plan",
+                    body: `HSA pays deductibles ($1,500–7,000/yr typical), copays, prescriptions, dental, vision. It does NOT pay ACA marketplace premiums. With an HDHP plan, pre-65 out-of-pocket costs can be $3–10K/yr — your HSA should be sized to cover this.`,
+                    color: C.purple,
+                    icon: "💊"
+                  },
+                  {
+                    title: "Spouse's employer plan",
+                    body: "If your spouse continues working, joining their employer plan is often the cheapest option. Check whether you'd qualify as a dependent.",
+                    color: C.gold,
+                    icon: "👥"
+                  },
+                ].map(({title,body,color,icon})=>(
+                  <div key={title} style={{ background:"#07101e", borderRadius:8, padding:"10px 12px", marginBottom:8, borderLeft:`3px solid ${color}` }}>
+                    <div style={{ fontSize:12, fontWeight:600, color, marginBottom:4 }}>{icon} {title}</div>
+                    <div style={{ fontSize:10, color:C.muted, lineHeight:1.6 }}>{body}</div>
+                  </div>
+                ))}
+                <div style={{ fontSize:10, color:C.muted, marginTop:4, padding:"8px 10px", background:"rgba(242,86,112,0.05)", borderRadius:6 }}>
+                  Update your pre-65 monthly premium in <strong style={{color:C.dim}}>Variables → Healthcare</strong> to accurately model this cost in your projection.
+                </div>
+              </div>
+            )}
+
+            <div style={S.card}>
+              <Head title="💡 KEY INSIGHTS"/>
+              {C2.cashFlow<0&&<Tip icon="⚠️" color={C.red} title="Negative Cash Flow" body={`You're spending ${$(Math.abs(C2.cashFlow))}/mo more than you earn. Address this before increasing investments.`}/>}
+              {C2.cashFlow>=0&&C2.cashFlow<500&&<Tip icon="📌" color={C.orange} title="Thin Margins" body={`Only ${$(C2.cashFlow)}/mo surplus. Build a 6-month emergency fund before accelerating investments.`}/>}
+              {C2.totalNonMortDebt>0&&<Tip icon="💳" color={C.orange} title="Debt Payoff Accelerates FIRE" body={`When your ${$k(C2.totalNonMortDebt)} in non-mortgage debt clears (~${C2.debtFreeYear}), redirect every freed payment into investments.`}/>}
+              {p.hasMortgage&&p.mortRate<4&&<Tip icon="🏠" color={C.green} title="Keep Your Low-Rate Mortgage" body={`Your ${p.mortRate}% mortgage is cheaper than expected investment returns. Never pay it off early — every extra dollar should go to investments.`}/>}
+              {p.hasMortgage&&p.mortRate>=6&&<Tip icon="🏠" color={C.orange} title="High Mortgage Rate" body={`At ${p.mortRate}%, extra mortgage payments earn a guaranteed ${p.mortRate}% return. Compare against investing before deciding.`}/>}
+              {(p.trad401kPct+p.roth401kPct)<p.empMatchPct&&<Tip icon="🚨" color={C.red} title="Leaving Free Money Behind" body={`Your employer matches up to ${p.empMatchPct}% but you're only contributing ${p.trad401kPct+p.roth401kPct}%. Increase to at least ${p.empMatchPct}% immediately.`}/>}
+              {p.hsaAnnual<hsaLimitAnnual&&<Tip icon="💊" color={C.purple} title={<><Term>HSA</Term> — Triple Tax Advantage</>} body={`You're contributing ${$(p.hsaAnnual)}/yr. The limit is ${$(hsaLimitAnnual)}/yr. HSA is the only triple tax-advantaged account — max it before taxable brokerage.`}/>}
+              {!p.hasVA&&!p.hasSS&&<Tip icon="📋" color={C.gold} title="Add Guaranteed Income Sources" body="Enable VA Disability and/or Social Security in Variables if applicable. Every $1,000/mo in guaranteed income = ~$300K less you need saved."/>}
+              {p.hasVA&&<Tip icon="🎖️" color={C.green} title={`VA = ${$k(C2.vaEquiv)} Portfolio Equivalent (today's $)`} body={`Your ${$(p.vaMonthly)}/mo VA disability (${$(C2.vaAtRet/12)}/mo at age ${p.retAge} after COLA) is worth ${$k(C2.vaEquiv)} in today's dollars. Tax-free, COLA-adjusted, no market risk.`}/>}
+              {p.trad401kBal>0&&p.retAge>=55&&<Tip icon="🔄" color={C.cyan} title="Roth Conversion Window" body={`After retiring, your income drops — that's your window. Convert up to ${$(p.filingStatus==="mfj"?STD_DED_MFJ:STD_DED_SINGLE)}/yr from Traditional to Roth at 0% federal tax before RMDs force withdrawals at higher rates.`}/>}
+              {onTrack
+                ? <Tip icon="✅" color={C.green} title="On Track" body={`Projected surplus of ${$k(C2.surplus)} at retirement. You're building wealth faster than required.`}/>
+                : <Tip icon="🎯" color={C.orange} title={`${$k(Math.abs(C2.surplus))} Shortfall`} body="Increase contributions, reduce retirement expenses, or push retirement age to close the gap."/>
+              }
+              {C2.hcAtRet*12 > C2.totalNeed*0.25 && (
+                <Tip icon="🏥" color={C.red} title="Healthcare Driving Costs"
+                  body={`Pre-65 healthcare at ${$(C2.hcAtRet)}/mo is ${Math.round(C2.hcAtRet*12/C2.totalNeed*100)}% of your total retirement expenses. Retiring at 65 or qualifying for VA healthcare (50%+ rating) dramatically reduces this.`}/>
+              )}
+            </div>
+
+            {/* ── WITHDRAWAL ORDER ── */}
+            <div style={S.card}>
+              <Head title="🏦 WITHDRAWAL ORDER" color={C.cyan} sub="The order you draw from accounts affects taxes, ACA subsidies, and portfolio longevity"/>
+              {p.retAge<55&&(
+                <div style={{ background:"rgba(242,86,112,0.07)", border:"1px solid rgba(242,86,112,0.35)", borderRadius:8, padding:"10px 12px", marginBottom:12 }}>
+                  <div style={{ fontSize:11, fontWeight:600, color:C.red, marginBottom:4 }}>⚠ Retiring Before 55 — Key Restrictions</div>
+                  <div style={{ fontSize:10, color:C.muted, lineHeight:1.7 }}>
+                    <Term>Rule of 55</Term> does NOT apply. <Term>Roth Conversion Ladder</Term> needed for 401k access.<br/>
+                    ✓ Accessible: <Term>VA Disability</Term>, <Term>Roth IRA</Term> contributions, brokerage, <Term>HSA</Term> (medical)
+                  </div>
+                </div>
+              )}
+              {[
+                { n:"1", src:<><Term>VA Disability</Term> · SS · Guaranteed income</>, detail:"Spend this before touching any portfolio. Tax-free, no MAGI impact.", c:C.green },
+                { n:"2", src:<>Traditional 401k / TSP — up to standard deduction ({$(p.filingStatus==="mfj"?STD_DED_MFJ:STD_DED_SINGLE)}/yr)</>, detail:`Withdrawals within the standard deduction are federally tax-free. Fill this bracket every year to chip away at Traditional balance and reduce future RMDs.`, c:C.cyan },
+                { n:"3", src:<><Term>Roth 401k</Term> / <Term>Roth IRA</Term> — remainder of expenses</>, detail:"Tax-free, no MAGI impact. Preserved for higher-expense years and legacy.", c:C.green },
+                { n:"4", src:<><Term>HSA</Term> (medical expenses only)</>, detail:"Triple tax-advantaged. Never pay healthcare from other accounts while HSA has a balance.", c:C.purple },
+                { n:"5", src:"Traditional 401k overflow (above standard deduction)", detail:"Taxed at ordinary income rates. Gross up withdrawal to net your needed amount. Avoid if possible — triggers ACA MAGI and higher bracket exposure.", c:C.orange },
+                { n:"6", src:"Taxable brokerage", detail:"LTCG rates. Manage for 0% LTCG bracket alongside Traditional draws. Flexible for large one-time expenses.", c:C.gold },
+              ].map(({ n,src,detail,c })=>(
+                <div key={n} style={{ display:"flex", gap:10, padding:"8px 0", borderBottom:`1px solid ${C.border}` }}>
+                  <div style={{ ...S.mono, fontSize:14, color:c, fontWeight:700, minWidth:18 }}>{n}</div>
+                  <div>
+                    <div style={{ fontSize:12, color:C.text, fontWeight:500 }}>{src}</div>
+                    <div style={{ fontSize:10, color:C.muted, marginTop:2, lineHeight:1.5 }}>{detail}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* ── PRIORITY LIST ── */}
+            <div style={S.card}>
+              {(()=>{
+                const retAge = p.retAge;
+                const yrsLeft = Math.max(0, retAge - p.curAge);
+                const onTrackLocal = C2.projReal >= C2.fireNumRealAdj;
+                const fireGap = C2.fireNumRealAdj - C2.projReal;
+                const fireContext = onTrackLocal
+                  ? `You're projected to have ${$k(C2.projReal)} vs a FIRE number of ${$k(C2.fireNumRealAdj)} — on track with ${$k(C2.surplus)} to spare.`
+                  : `You need ${$k(C2.fireNumRealAdj)} — currently projecting ${$k(C2.projReal)}. Gap: ${$k(fireGap)}. Prioritize accordingly.`;
+
+                // Age ranges
+                const sub65    = retAge >= 65;
+                const mid      = retAge >= 59.5 && retAge < 65;
+                const rule55   = retAge >= 55 && retAge < 59.5;
+                const early    = retAge < 55;
+
+                const label = sub65    ? "Retiring at 65+ · Access to all accounts · Medicare eligible"
+                            : mid      ? "Retiring 59½–65 · Full account access · Pre-Medicare"
+                            : rule55   ? "Retiring 55–59½ · Rule of 55 is your bridge"
+                            :            "Retiring before 55 · Liquidity is everything";
+
+                const items = sub65 ? [
+                  { n:1, a:"Emergency fund (3–6 months)", w:"Non-negotiable foundation. Keeps you from liquidating investments in a downturn.", c:C.gold },
+                  { n:2, a:"Capture full employer 401k match", w:`Free money — 100% instant return. ${$(p.salary*p.empMatchPct/100)}/yr at your current match rate.`, c:C.cyan },
+                  { n:3, a:`Max HSA (${$(hsaLimitAnnual)}/yr)`, w:`At 65 HSA becomes the best account in the tax code — Medicare premiums, dental, vision, and any expense taxed like Traditional (but medical stays tax-free forever). Triple tax advantage. Max every year.`, c:C.purple },
+                  { n:4, a:`Max Roth IRA + Roth 401k (${$(rothIRALimit + k401kLimit)}/yr combined)`, w:`Tax-free growth with no RMDs. Roth 401k: ${$(k401kLimit)}/yr. Roth IRA: ${$(rothIRALimit)}/yr.${p.curAge>=60&&p.curAge<=63?" Super catch-up applies to 401k.":p.curAge>=50?" Catch-up eligible on both.":""}`, c:C.cyan },
+                  { n:5, a:`Traditional 401k beyond Roth capacity`, w:`Pre-tax reduces your taxable income now. Manage withdrawals in retirement to stay in low brackets using the standard deduction strategy.`, c:C.gold },
+                  { n:6, a:"Taxable brokerage with remaining surplus", w:"No limits, no restrictions. LTCG rates. Full flexibility.", c:C.muted },
+                ] : mid ? [
+                  { n:1, a:"Emergency fund (3–6 months)", w:"Non-negotiable foundation.", c:C.gold },
+                  { n:2, a:"Capture full employer 401k match", w:`Free money — 100% instant return. ${$(p.salary*p.empMatchPct/100)}/yr at your current match rate.`, c:C.cyan },
+                  { n:3, a:`Max Roth IRA (${$(rothIRALimit)}/yr)`, w:`Open now to start the 5-year clock (satisfies ${p.rothIRAOpenYear+5}). Contributions accessible anytime penalty-free. After 59½ earnings are also tax-free.${p.curAge>=50?" Catch-up eligible.":""}`, c:C.cyan },
+                  { n:4, a:`Max HSA (${$(hsaLimitAnnual)}/yr)`, w:`Critical for the pre-Medicare gap. Covers deductibles, copays, dental, vision, prescriptions — all the expenses your ACA plan doesn't. After 65: Medicare premiums qualify too. Every dollar here is triple tax-advantaged.`, c:C.purple },
+                  { n:5, a:`Max Roth 401k (${$(k401kLimit)}/yr)`, w:`Tax-free at withdrawal. Full access at 59½. Keep in employer plan — rolling to IRA before then only matters for Rule of 55 which doesn't apply at this age range.${p.curAge>=50?" Catch-up eligible.":""}`, c:C.cyan },
+                  { n:6, a:"Taxable brokerage with remaining surplus", w:"No limits. LTCG rates. Flexible bridge for any gaps before 59½.", c:C.muted },
+                ] : rule55 ? [
+                  { n:1, a:"Emergency fund (3–6 months)", w:"Non-negotiable. One bad year without this and you're forced to liquidate at the worst time.", c:C.gold },
+                  { n:2, a:"Capture full employer 401k match", w:`Free money — 100% instant return. ${$(p.salary*p.empMatchPct/100)}/yr at your current match rate.`, c:C.cyan },
+                  { n:3, a:`Roth 401k — up to 15% total 401k contributions`, w:`Rule of 55: separate from employer at 55 → full 401k penalty-free immediately. Keep in employer plan — do NOT roll to IRA before 59½ or you lose this. Roth 401k preferred over Traditional for tax-free access. 15% total gives the match plus meaningful Roth accumulation.`, c:C.cyan },
+                  { n:4, a:`HSA (${$(hsaLimitAnnual)}/yr) — your pre-Medicare medical fund`, w:`Deductibles, copays, prescriptions, dental, vision — all tax-free. ACA plans pre-65 can have $3–7K/yr in out-of-pocket costs. HSA covers this without touching your portfolio. Keep every medical receipt — reimburse yourself years later if needed.`, c:C.purple },
+                  { n:5, a:`Open Roth IRA + contribute what you can`, w:`Start the 5-year clock if not already (satisfies ${p.rothIRAOpenYear+5}). Contributions accessible anytime. Supplemental to your 401k bridge — don't rely on basis alone unless you've been maxing for years.`, c:C.cyan },
+                  { n:6, a:"Traditional 401k if more 401k room remains", w:"Pre-tax now, taxed at withdrawal. Use standard deduction strategy in retirement to draw tax-free up to bracket limit.", c:C.gold },
+                  { n:7, a:"Taxable brokerage with remaining surplus", w:"No limits, full flexibility. Good overflow vehicle if 401k + HSA are maxed.", c:C.muted },
+                ] : [
+                  { n:1, a:"Emergency fund (6 months minimum)", w:"Early retirement demands a larger cushion — sequence of returns risk is highest in the first 5 years.", c:C.gold },
+                  { n:2, a:"Capture full employer 401k match", w:`Free money — always capture this regardless of retirement age. ${$(p.salary*p.empMatchPct/100)}/yr at your current match rate.`, c:C.cyan },
+                  { n:3, a:`Max Roth IRA (${$(rothIRALimit)}/yr) — open immediately`, w:`Start the 5-year clock today. Satisfies ${p.rothIRAOpenYear+5}. Contributions (not earnings) accessible anytime penalty-free — critical liquid bridge before 59½. Track your contribution basis carefully.${p.curAge>=50?" Catch-up eligible.":""}`, c:C.cyan },
+                  { n:4, a:"Taxable brokerage — your primary liquid bridge", w:"No age restrictions, no penalties, no limits. LTCG rates. For retiring before 55 this is your main income source until penalty-free retirement account access kicks in. Prioritize this over HSA if cash flow is tight.", c:C.gold },
+                  { n:5, a:`HSA (${$(hsaLimitAnnual)}/yr) — medical costs only`, w:`Can't pay ACA premiums (only COBRA or Medicare qualify). Can pay deductibles, copays, dental, vision, prescriptions. Pre-65 medical costs can be $5-10K/yr out of pocket. Contribute for expected medical spend only — don't lock up money you'll need for living expenses.`, c:C.purple },
+                  { n:6, a:"Roth 401k contributions beyond match", w:"Tax-free at 59½. Rule of 55 doesn't help you — you'll need the Roth conversion ladder. Start conversions 5 years before you need the money.", c:C.muted },
+                  { n:7, a:"Start Roth conversion ladder immediately at retirement", w:"Convert Traditional 401k → Roth IRA each year in low-income retirement years. Each conversion accessible penalty-free after 5 years. Bridge with brokerage and Roth contributions during the wait.", c:C.cyan },
+                ];
+
+                return <>
+                  <Head title="✅ CONTRIBUTION PRIORITY ORDER" sub={label}/>
+                  <div style={{ background:"rgba(0,238,255,0.05)", border:`1px solid ${C.border}`, borderRadius:8, padding:"10px 12px", marginBottom:12, fontSize:10, color:C.muted, lineHeight:1.6 }}>
+                    {fireContext}
+                  </div>
+                  {items.map(({ n,a,w,c })=>(
+                    <div key={n} style={{ display:"flex", gap:10, padding:"7px 0", borderBottom:`1px solid ${C.border}` }}>
+                      <div style={{ ...S.mono, fontSize:14, color:c, fontWeight:700, minWidth:18 }}>{n}</div>
+                      <div>
+                        <div style={{ fontSize:12, color:C.text, fontWeight:500 }}>{a}</div>
+                        <div style={{ fontSize:10, color:C.muted, marginTop:1, lineHeight:1.4 }}>{w}</div>
+                      </div>
+                    </div>
+                  ))}
+                </>;
+              })()}
+            </div>
+          </div>
+        </div>
+
+
+        <div style={{ textAlign:"center", marginTop:20 }}>
+          <button onClick={()=>setPage(2)} style={{ padding:"12px 32px", borderRadius:8, border:"none", cursor:"pointer", background:`linear-gradient(135deg,${C.cyanDim},${C.cyan})`, color:"#000", fontFamily:"'Outfit',sans-serif", fontSize:13, fontWeight:600 }}>
+            View Projection Chart →
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  /* ════════════════════════════════════
+     PAGE 2 — PROJECTION + SCENARIOS
+  ════════════════════════════════════ */
+  const Page2 = () => {
+    const onTrack = C2.projReal >= C2.fireNumRealAdj;
+    const drawMo = C2.drawNeeded / 12;
+    const maxDraw = C2.monthlyDraw;
+
+    // Define scenarios
+    const SLIDER_ID = 4;
+    const scenarios = [
+      { id:0, label:"+2% 401k", icon:"📈", desc:"Increase 401k contribution by 2% of salary", mod:q=>({...q, roth401kPct:q.roth401kPct+2}) },
+      { id:1, label:"+$500/mo HSA", icon:"🏥", desc:"Add $500/month more to HSA", mod:q=>({...q, hsaAnnual:q.hsaAnnual+6000}) },
+      { id:2, label:"Retire 2 yrs later", icon:"⏳", desc:`Retire at age ${p.retAge+2} instead of ${p.retAge}`, mod:q=>({...q, retAge:q.retAge+2}) },
+      { id:3, label:"+$200/mo brokerage", icon:"💰", desc:"Add $200/month to taxable brokerage", mod:q=>({...q, monthlyBrokerageContrib:q.monthlyBrokerageContrib+200}) },
+      { id:SLIDER_ID, label:"Retire at age...", icon:"🎯", desc:"Drag the slider to explore any retirement age", mod:q=>({...q, retAge:scenarioRetAge||q.retAge}) },
+    ];
+
+    // Initialize slider age when scenario 4 selected
+    const sliderAge = scenarioRetAge || p.retAge;
+
+    // Compute scenario projection inline
+    const computeScenarioProj = (mod) => {
+      const q = mod(p);
+      const yrsQ = Math.max(0, q.retAge - q.curAge);
+      let proj = C2.totalInvested;
+      const hsaForYrQ = yr => (q.hsaAnnual||0) + (q.hsaEmployer||0);
+
+      // Shared surplus helper — mirrors yearlySurplus but uses q instead of p
+      const qSurplus = (yrs) => {
+        if(q.surplusAction !== "invest") return { ret:0, brok:0 };
+        const sal = q.salary*Math.pow(1+q.salaryGrowth/100,yrs);
+        const preTax2 = sal*(q.trad401kPct/100)+q.hsaAnnual+q.hcPremiumPerPaycheck*PAYCHECKS_YR;
+        const agi2 = Math.max(0,sal-preTax2);
+        const qMfj=q.filingStatus==="mfj"; const { tax: fedTax2 } = calcTax(Math.max(0,agi2-(qMfj?STD_DED_MFJ:STD_DED_SINGLE)), qMfj);
+        const take2=(sal-preTax2-sal*(q.roth401kPct/100)-sal*FICA_RATE-fedTax2-agi2*(q.stateTax/100))/12;
+        const inc2=take2+(q.hasVA?q.vaMonthly:0)+(q.spouseIncome/12);
+        const d1=q.debt1Bal>0&&yrs*12<C2.debt1.months?q.debt1Monthly:0;
+        const d2=q.debt2Bal>0&&yrs*12<C2.debt2.months?q.debt2Monthly:0;
+        const d3=q.debt3Bal>0&&yrs*12<C2.debt3.months?q.debt3Monthly:0;
+        const flow=Math.max(0,inc2-q.mortTotal-C2.livingMonthly-d1-d2-d3);
+        const toRet=q.surplusAccount==="401k"; const toRoth=q.surplusAccount==="roth"; const toHsa=q.surplusAccount==="hsa"; const toSav=q.surplusAccount==="savings"; const toBrok=q.surplusAccount==="brokerage";
+        return { ret:toRet?flow*12:0, roth:toRoth?flow*12:0, hsa:toHsa?flow*12:0, brok:toBrok?flow*12:0, sav:toSav?flow*12:0 };
+      };
+
+      for(let i=0;i<yrsQ;i++){
+        const yr=CY+i, sal=q.salary*Math.pow(1+q.salaryGrowth/100,i);
+        const loanRepay=(q.debt3Bal>0&&i*12<C2.debt3.months)?q.debt3Monthly*12:0;
+        const s=qSurplus(i);
+        proj=proj*(1+q.growth/100)+sal*((q.trad401kPct+q.roth401kPct+q.empMatchPct+q.empBasePct)/100)+hsaForYrQ(yr)+q.rothIRAContrib+q.monthlyBrokerageContrib*12+loanRepay+s.ret+s.brok;
+      }
+      const infM = Math.pow(1+q.inflation/100,yrsQ);
+      const retYrs = q.planAge - q.retAge;
+      const swr = retYrs>=50?Math.min(q.swr,3.0):retYrs>=45?Math.min(q.swr,3.25):retYrs>=40?Math.min(q.swr,3.5):retYrs>=35?Math.min(q.swr,3.75):q.swr;
+      const vaQ = q.hasVA ? q.vaMonthly*12*Math.pow(1+q.vaCola/100,yrsQ) : 0;
+      const ssQ = q.hasSS&&q.ssAge<=q.retAge ? q.ssMonthly*12*infM : 0;
+      const baseNoHousing = q.hasMortgage ? (C2.livingMonthly-q.propTax-q.homeInsurance)*12*(q.retRatio/100)*infM : (C2.livingMonthly-q.homeInsurance)*12*(q.retRatio/100)*infM;
+      const housingInfl = q.hasMortgage ? (q.propTax+q.homeInsurance)*12*Math.pow(1+q.inflation/100*1.5,yrsQ)*(q.retRatio/100) : 0;
+      const livQ = baseNoHousing+housingInfl;
+      const extQ = q.retExtras*12*infM;
+      const mortQ = q.hasMortgage ? ((CY+yrsQ)<=q.mortPayoff ? q.mortTotal*12 : 0) : q.mortTotal*12;
+      // Use makeHcMonthly so Medicare transition at 65 is correctly handled
+      const hcQ = makeHcMonthly(q)(q.retAge, 0) * 12;
+      const drawQ = Math.max(0,livQ+extQ+mortQ+hcQ-vaQ-ssQ);
+      const fireQ = drawQ/(swr/100);
+      const penQ = q.retAge<55?1+PRE55_PENALTY*PRE55_PARTIAL:1;
+      const fireQReal = (fireQ/infM)*penQ;
+      const projReal = proj/infM;
+      const surplus = projReal-fireQReal;
+      const monthlyDraw = proj*swr/100/12;
+      return { proj, projReal, fireQReal, surplus, monthlyDraw, retAge:q.retAge, swr };
+    };
+
+    const activeScenario = scenarioIdx !== null ? computeScenarioProj(scenarios[scenarioIdx].mod) : null;
+
+    // Scenario chart — delegates to the same runSimulation engine as the main projection
+    const computeScenarioChart = (mod) => {
+      const q = mod(p);
+      const qMfj = q.filingStatus === "mfj";
+      const qLivingMonthly = q.electric+q.water+q.phone+q.internet+q.food+q.carInsurance+q.gasMonthly+q.other+q.propTax+q.homeInsurance;
+      const qHcFn = makeHcMonthly(q);
+
+      // Build a surplus function for q using the same logic as yearlySurplus
+      const qDebtPayoff = (bal, rate, monthly) => {
+        if(bal <= 0 || monthly <= 0) return { months: 0 };
+        if(rate <= 0) return { months: Math.ceil(bal/monthly) };
+        const r = rate/100/12;
+        return { months: Math.ceil(-Math.log(1-r*bal/monthly)/Math.log(1+r)) };
+      };
+      const qD1 = qDebtPayoff(q.debt1Bal, q.debt1Rate, q.debt1Monthly);
+      const qD2 = qDebtPayoff(q.debt2Bal, q.debt2Rate, q.debt2Monthly);
+      const qD3 = qDebtPayoff(q.debt3Bal, q.debt3Rate, q.debt3Monthly);
+
+      const qSurplusFn = (yrs) => {
+        if(q.surplusAction !== "invest") return { ret:0, brok:0 };
+        const sal = q.salary*Math.pow(1+q.salaryGrowth/100,yrs);
+        const preTax2 = sal*(q.trad401kPct/100)+q.hsaAnnual+q.hcPremiumPerPaycheck*PAYCHECKS_YR;
+        const agi2 = Math.max(0,sal-preTax2);
+        const { tax: fedTax2 } = calcTax(Math.max(0,agi2-(qMfj?STD_DED_MFJ:STD_DED_SINGLE)), qMfj);
+        const take2 = (sal-preTax2-sal*(q.roth401kPct/100)-sal*FICA_RATE-fedTax2-agi2*(q.stateTax/100))/12;
+        const inc2  = take2+(q.hasVA?q.vaMonthly:0)+(q.spouseIncome/12);
+        const d1 = q.debt1Bal>0&&yrs*12<qD1.months?q.debt1Monthly:0;
+        const d2 = q.debt2Bal>0&&yrs*12<qD2.months?q.debt2Monthly:0;
+        const d3 = q.debt3Bal>0&&yrs*12<qD3.months?q.debt3Monthly:0;
+        const flow = Math.max(0,inc2-q.mortTotal-qLivingMonthly-d1-d2-d3);
+        const toRet=q.surplusAccount==="401k"; const toRoth=q.surplusAccount==="roth"; const toHsa=q.surplusAccount==="hsa"; const toSav=q.surplusAccount==="savings"; const toBrok=q.surplusAccount==="brokerage";
+        return { ret:toRet?flow*12:0, roth:toRoth?flow*12:0, hsa:toHsa?flow*12:0, brok:toBrok?flow*12:0, sav:toSav?flow*12:0 };
+      };
+
+      const { data } = runSimulation(q, qLivingMonthly, qHcFn, qSurplusFn,
+        { d1:qD1.months, d2:qD2.months, d3:qD3.months }, q.retAge);
+      return data;
+    };
+    const scenarioChartData = scenarioIdx !== null ? computeScenarioChart(scenarios[scenarioIdx].mod) : null;
+
+    return (
+      <div style={{ maxWidth:1200, margin:"0 auto", padding:"24px 20px" }}>
+
+        {/* ── MONTHLY DRAW HIGHLIGHT ── */}
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:12, marginBottom:16 }}>
+          <div style={{ ...S.card, textAlign:"center", padding:"16px" }}>
+            <div style={{ fontSize:10, letterSpacing:"0.1em", textTransform:"uppercase", color:C.muted, marginBottom:4 }}>Portfolio draw/month</div>
+            <div style={{ ...S.mono, fontSize:22, fontWeight:700, color:C.cyan }}>{$(C2.monthlyDraw)}</div>
+            <div style={{ fontSize:10, color:C.muted }}>At {C2.durationSWR}% SWR · age {p.retAge}</div>
+          </div>
+          <div style={{ ...S.card, textAlign:"center", padding:"16px", border:`1px solid ${onTrack?C.green:"rgba(242,86,112,0.4)"}` }}>
+            <div style={{ fontSize:10, letterSpacing:"0.1em", textTransform:"uppercase", color:C.muted, marginBottom:4 }}>{onTrack?"Surplus":"Shortfall"}</div>
+            <div style={{ ...S.mono, fontSize:22, fontWeight:700, color:onTrack?C.green:C.red }}>{(C2.surplus>=0?"+":"")+$k(C2.surplus)}</div>
+            <div style={{ fontSize:10, color:C.muted }}>Today's dollars at age {p.retAge}</div>
+          </div>
+          <div style={{ ...S.card, textAlign:"center", padding:"16px", background:"rgba(183,139,250,0.05)", border:`1px solid rgba(183,139,250,0.25)` }}>
+            <div style={{ fontSize:10, letterSpacing:"0.1em", textTransform:"uppercase", color:C.muted, marginBottom:4 }}>HSA at retirement</div>
+            <div style={{ ...S.mono, fontSize:22, fontWeight:700, color:C.purple }}>{$k(p.hsa*Math.pow(1+p.growth/100,C2.ytt)+((p.hsaAnnual+p.hsaEmployer)*((Math.pow(1+p.growth/100,C2.ytt)-1)/(p.growth/100))))}</div>
+            <div style={{ fontSize:10, color:C.muted }}>Medical reserve · not included in portfolio draw</div>
+          </div>
+        </div>
+
+        {/* ── SCENARIOS ── */}
+        <div style={S.card}>
+          <Head title="🔀 WHAT IF SCENARIOS" sub="Select a scenario to compare against your base projection"/>
+          <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:16 }}>
+            {scenarios.map(s=>(
+              <button key={s.id} onClick={()=>{ setScenarioIdx(scenarioIdx===s.id?null:s.id); if(s.id===SLIDER_ID&&!scenarioRetAge) setScenarioRetAge(p.retAge); }} style={{
+                padding:"8px 16px", borderRadius:8, cursor:"pointer",
+                fontFamily:"'Outfit',sans-serif", fontSize:12, fontWeight:500,
+                background: scenarioIdx===s.id ? "rgba(244,185,66,0.15)" : C.card,
+                color: scenarioIdx===s.id ? C.gold : C.dim,
+                border: `1px solid ${scenarioIdx===s.id?"rgba(244,185,66,0.4)":C.border}`,
+                transition:"all 0.2s",
+              }}>{s.icon} {s.label}</button>
+            ))}
+            {scenarioIdx!==null&&(
+              <button onClick={()=>{setScenarioIdx(null);setScenarioRetAge(null);}} style={{ padding:"8px 16px", borderRadius:8, border:`1px solid ${C.border}`, background:"transparent", color:C.muted, fontSize:12, cursor:"pointer", fontFamily:"'Outfit',sans-serif" }}>
+                ✕ Clear
+              </button>
+            )}
+          </div>
+
+          {/* Interactive retirement age slider */}
+          {scenarioIdx===SLIDER_ID&&(
+            <div style={{ marginBottom:16 }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+                <div style={{ fontSize:12, color:C.dim }}>🎯 Retire at age <span style={{ ...S.mono, fontSize:16, fontWeight:700, color:C.gold }}>{sliderAge}</span> <span style={{ fontSize:11, color:C.muted }}>({toY(sliderAge,p.curAge)} · {sliderAge-p.curAge} yrs away)</span></div>
+                <div style={{ fontSize:11, color:C.muted }}>Base: age {p.retAge}</div>
+              </div>
+              <input type="range" min={40} max={72} value={sliderAge}
+                onChange={e=>setScenarioRetAge(parseInt(e.target.value))}
+                style={{ width:"100%", accentColor:C.gold }}/>
+              <div style={{ display:"flex", justifyContent:"space-between", fontSize:9, color:C.muted, marginTop:2 }}>
+                <span>40</span><span>50</span><span>60</span><span>70</span>
+              </div>
+            </div>
+          )}
+
+          {scenarioIdx===null&&(
+            <div style={{ fontSize:11, color:C.muted, textAlign:"center", padding:"16px 0" }}>
+              Select a scenario above to overlay it on the projection chart
+            </div>
+          )}
+
+          {activeScenario&&(
+            <div>
+              <div style={{ fontSize:13, fontWeight:600, marginBottom:10 }}>
+                {activeScenario.surplus >= 0
+                  ? <span style={{ color:C.green }}>✅ Your portfolio supports <span style={{ ...S.mono }}>{$(activeScenario.monthlyDraw)}/month</span> through retirement.</span>
+                  : <span style={{ color:C.orange }}>⚠️ Shortfall of <span style={{ ...S.mono }}>{$k(Math.abs(activeScenario.surplus))}</span> — portfolio does not meet FIRE number.</span>
+                }
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:10 }}>
+                {[
+                  { label:"Portfolio at ret.", base:$k(C2.projReal), scenario:$k(activeScenario.projReal), delta:activeScenario.projReal-C2.projReal },
+                  { label:"FIRE Number", base:$k(C2.fireNumRealAdj), scenario:$k(activeScenario.fireQReal), delta:C2.fireNumRealAdj-activeScenario.fireQReal, lowerIsBetter:true },
+                  { label:"Surplus/Deficit", base:$k(C2.surplus), scenario:$k(activeScenario.surplus), delta:activeScenario.surplus-C2.surplus },
+                  { label:"Monthly draw", base:$(C2.monthlyDraw), scenario:$(activeScenario.monthlyDraw), delta:activeScenario.monthlyDraw-C2.monthlyDraw },
+                ].map(({ label,base,scenario,delta,lowerIsBetter })=>(
+                  <div key={label} style={{ background:"#07101e", borderRadius:6, padding:"8px 10px" }}>
+                    <div style={{ fontSize:10, color:C.muted, marginBottom:4 }}>{label}</div>
+                    <div style={{ ...S.mono, fontSize:11, color:C.dim }}>Base: {base}</div>
+                    <div style={{ ...S.mono, fontSize:11, color:C.gold }}>New: {scenario}</div>
+                    <div style={{ ...S.mono, fontSize:12, color:(lowerIsBetter?delta>0:delta>0)?C.green:delta<0?C.red:C.muted, fontWeight:600, marginTop:2 }}>
+                      {delta>0?"+":""}{Math.abs(delta)>1000?$k(delta):$(delta)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ── MAIN CHART ── */}
+        <div style={S.card}>
+          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12, flexWrap:"wrap", gap:10 }}>
+            <div>
+              <div style={{ fontSize:14, fontWeight:600, color:C.cyan }}>
+                PORTFOLIO PROJECTION — RETIRING AGE {p.retAge} ({toY(p.retAge,p.curAge)})
+                {activeScenario&&<span style={{ color:C.gold, marginLeft:8 }}>· {scenarios[scenarioIdx].label} overlay</span>}
+              </div>
+              <div style={{ fontSize:10, color:C.muted, marginTop:2 }}>{p.growth}% growth · {p.inflation}% inflation · {C2.durationSWR}% SWR · Age {p.curAge} → {p.planAge}</div>
+            </div>
+            <div style={{ ...S.mono, fontSize:12 }}>
+              {onTrack
+                ? <span style={{ color:C.green }}>✓ ON TRACK — {$k(C2.surplus)} surplus</span>
+                : <span style={{ color:C.red }}>⚠ {$k(Math.abs(C2.surplus))} shortfall</span>}
+            </div>
+          </div>
+          <ResponsiveAreaChart
+            data={C2.chart}
+            retAge={p.retAge}
+            ssAge={p.hasSS?p.ssAge:null}
+            fireNum={C2.fireNum}
+            hasMortgage={p.hasMortgage}
+            mortPayoffAge={p.curAge+Math.ceil(C2.mort.months/12)}
+            curAge={p.curAge}
+            scenarioData={scenarioChartData}
+            scenarioRetAge={scenarioIdx===SLIDER_ID?sliderAge:activeScenario?.retAge}
+          />
+          <div style={{ display:"flex", gap:20, flexWrap:"wrap", marginTop:10 }}>
+            {[
+              { color:C.cyan, label:"Base projection", line:true },
+              ...(scenarioChartData?[{ color:C.gold, label:scenarioIdx===SLIDER_ID?`Age ${sliderAge} scenario`:scenarios[scenarioIdx]?.label, dash:true }]:[]),
+              { color:C.gold, label:"Retirement age", vert:true },
+              { color:C.green, label:"Medicare (65)", vert:true },
+              { color:C.gold, label:"FIRE # threshold", dash:true },
+            ].map(({ color,label,dash })=>(
+              <div key={label} style={{ display:"flex", alignItems:"center", gap:6 }}>
+                <div style={{ width:20, height:2, background:color, opacity:0.9, borderTop:dash?`2px dashed ${color}`:"none", marginTop:1 }}/>
+                <span style={{ fontSize:10, color:C.muted }}>{label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* ── RETIREMENT INCOME vs EXPENSES ── */}
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+          <div style={S.card}>
+            <Head title={`🧾 EXPENSES AT AGE ${p.retAge}`} sub={`Future dollars · ${p.inflation}% inflation · ${C2.ytt} years from now`} color={C.red}/>
+            {(()=>{
+              const inf = Math.pow(1+p.inflation/100, C2.ytt);
+              const housingInf = Math.pow(1+p.inflation/100*1.5, C2.ytt);
+              const BRow = ({ label, ann, color, bold, note }) => (
+                <div style={{ display:"flex", justifyContent:"space-between", padding:"6px 0", borderBottom:`1px solid ${C.border}` }}>
+                  <div>
+                    <span style={{ fontSize:12, color:bold?C.dim:C.muted }}>{label}</span>
+                    {note&&<div style={{ fontSize:9, color:C.muted }}>{note}</div>}
+                  </div>
+                  <div style={{ textAlign:"right" }}>
+                    <div style={{ ...S.mono, fontSize:12, color:color||C.text, fontWeight:bold?600:400 }}>{$(ann/12)}<span style={{ fontSize:9, color:C.muted }}>/mo</span></div>
+                    <div style={{ fontSize:9, color:C.muted }}>{$(ann)}/yr</div>
+                  </div>
+                </div>
+              );
+              const mortAnn = p.hasMortgage ? ((CY+C2.ytt)<=p.mortPayoff ? p.mortTotal*12 : 0) : p.mortTotal*12;
+              const hcPre65 = C2.hcAtRet;
+              // Homeowners: strip propTax+insurance from living, inflate separately at housing rate
+              // Renters: rent is already in mortAnn (inflated at standard rate), no propTax
+              const propAndIns = p.hasMortgage ? (p.propTax+p.homeInsurance)*12*housingInf*(p.retRatio/100) : 0;
+              const baseNoHousing = p.hasMortgage
+                ? (C2.livingMonthly-p.propTax-p.homeInsurance)*12*(p.retRatio/100)*inf
+                : (C2.livingMonthly-p.homeInsurance)*12*(p.retRatio/100)*inf; // renters: exclude homeInsurance (renter's ins minimal, already in living)
+              const totalLiving = baseNoHousing + propAndIns + p.retExtras*12*inf;
+              const totalAnn = totalLiving + mortAnn + hcPre65;
+              return <>
+                {p.hasMortgage
+                  ? <BRow label="Mortgage" ann={mortAnn} color={mortAnn>0?C.orange:C.green} bold note={mortAnn>0?`Active until ${p.mortPayoff}`:"Paid off ✓"}/>
+                  : <BRow label="Rent" ann={mortAnn} color={C.orange} bold note="Inflates with general inflation"/>
+                }
+                {p.hasMortgage && (
+                  <BRow label="Property tax + insurance" ann={propAndIns} color={C.orange} note={`Inflates at ${(p.inflation*1.5).toFixed(1)}%/yr`}/>
+                )}
+                <BRow label={`Healthcare (pre-65${p.filingStatus==="mfj"?" · couple":" · individual"})`} ann={hcPre65} color={C.red} bold note={`Post-65 Medicare: ${$(p.post65HC*(p.filingStatus==="mfj"?2:1))}/mo ${p.filingStatus==="mfj"?"couple":"individual"} · $${p.post65HC}/person`}/>
+                <BRow label="Living expenses" ann={baseNoHousing} color={C.muted}/>
+                <BRow label="Extras / travel / fun" ann={p.retExtras*12*inf} color={C.gold}/>
+                <div style={{ borderTop:`2px solid ${C.border}`, paddingTop:8, marginTop:4 }}>
+                  <BRow label="TOTAL EXPENSES" ann={totalAnn} color={C.red} bold/>
+                </div>
+                <div style={{ background:"#07101e", borderRadius:8, padding:"10px 12px", marginTop:10 }}>
+                  <div style={{ fontSize:10, color:C.dim, marginBottom:4 }}>In today's dollars (what it "feels like")</div>
+                  <KV k="Monthly" v={$(totalAnn/12/inf)} vc={C.text}/>
+                  <KV k="Annual" v={$(totalAnn/inf)} vc={C.text}/>
+                </div>
+              </>;
+            })()}
+          </div>
+
+          <div style={S.card}>
+            <Head title={`💰 INCOME AT AGE ${p.retAge}`} color={C.green} sub="All guaranteed sources"/>
+            {p.hasVA&&<div style={{ background:"rgba(34,199,122,0.07)", border:"1px solid rgba(34,199,122,0.2)", borderRadius:8, padding:"10px 12px", marginBottom:10 }}>
+              <KV k="VA disability today" v={$(p.vaMonthly)+"/mo"} vc={C.green}/>
+              <KV k={`VA at age ${p.retAge} (COLA-adjusted, future $)`} v={$(C2.vaAtRet/12)+"/mo"} vc={C.green} bold/>
+              <KV k="Portfolio equivalent (today's $)" v={$k(C2.vaEquiv)} vc={C.green} bold/>
+            </div>}
+            {p.hasSS&&<div style={{ background:"rgba(244,185,66,0.07)", border:"1px solid rgba(244,185,66,0.2)", borderRadius:8, padding:"10px 12px", marginBottom:10 }}>
+              <KV k={`SS at age ${p.ssAge}`} v={$(p.ssMonthly)+"/mo today"} vc={C.gold}/>
+              {p.ssAge>p.retAge&&<KV k="Bridge period" v={`${p.ssAge-p.retAge} yrs from portfolio`} vc={C.orange}/>}
+            </div>}
+            <KV k="Total guaranteed income at retirement" v={$(C2.guaranteedIncome/12)+"/mo"} vc={C.green} bold/>
+            <div style={{ height:1, background:C.border, margin:"10px 0" }}/>
+            <KV k="Portfolio draw needed" v={$(drawMo)+"/mo"} vc={C.orange} bold/>
+            <KV k="Max safe monthly draw" v={$(maxDraw)+"/mo"} vc={onTrack?C.green:C.red} bold/>
+            <div style={{ marginTop:12, padding:"10px 12px", background:onTrack?"rgba(34,199,122,0.07)":"rgba(242,86,112,0.07)", borderRadius:8, border:`1px solid ${onTrack?"rgba(34,199,122,0.25)":"rgba(242,86,112,0.25)"}` }}>
+              <div style={{ fontSize:11, fontWeight:600, color:onTrack?C.green:C.red, marginBottom:4 }}>
+                {onTrack ? "✓ Portfolio can support your retirement" : "⚠ Portfolio falls short of retirement needs"}
+              </div>
+              <div style={{ fontSize:10, color:C.muted, lineHeight:1.6 }}>
+                {onTrack
+                  ? `Portfolio supports ${$(maxDraw)}/mo. You need ${$(drawMo)}/mo. Buffer: ${$(maxDraw-drawMo)}/mo.`
+                  : `Portfolio supports ${$(maxDraw)}/mo but you need ${$(drawMo)}/mo. Gap: ${$(drawMo-maxDraw)}/mo.`}
+              </div>
+            </div>
+
+            {/* Lifestyle levers */}
+            <div style={{ marginTop:14 }}>
+              <SectionDivider label="🎛️ LIFESTYLE LEVERS" color={C.gold}/>
+              <Slider label="Retirement spending vs today" value={p.retRatio} onChange={v=>setP({...p,retRatio:v})} min={50} max={130} fmt={v=>`${v}% = ${$(C2.livingMonthly*v/100)}/mo`}/>
+              <Field label="Monthly extras (travel, hobbies)" value={p.retExtras} onChange={v=>setP({...p,retExtras:v})} prefix="$" suffix="/mo"/>
+              <div style={{ background:"rgba(244,185,66,0.07)", border:"1px solid rgba(244,185,66,0.2)", borderRadius:8, padding:"10px 12px" }}>
+                <div style={{ fontSize:10, color:C.gold, fontWeight:600, marginBottom:4 }}>Each $100/mo more in retirement:</div>
+                <KV k="Adds to FIRE number" v={$k(1200/(p.swr/100))} vc={C.red}/>
+                <KV k="Roughly adds to working years" v="~0.5–1 year" vc={C.red}/>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ── SENSITIVITY ANALYSIS ── */}
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginTop:14 }}>
+          <div style={{ ...S.card, border:`1px solid rgba(244,185,66,0.2)` }}>
+            <Head title="🔬 SENSITIVITY ANALYSIS" color={C.gold} sub="How single variables shift your FIRE number"/>
+            {[
+              ["SWR 3.0% (ultra conservative, 50yr+)", $k(C2.drawNeeded/0.03/C2.infMult)],
+              ["SWR 3.5% (FIRE standard, 40yr+)", $k(C2.drawNeeded/0.035/C2.infMult)],
+              ["SWR 4.0% (Trinity Study, 30yr)", $k(C2.drawNeeded/0.04/C2.infMult)],
+              [`Current (${C2.durationSWR}% · ${C2.retirementYears}-yr plan)`, $k(C2.fireNumRealAdj)+" ←"],
+              ["$500/mo less spending", $k((C2.drawNeeded-6000)/C2.durationSWR*100/C2.infMult)],
+              ["$500/mo more spending", $k((C2.drawNeeded+6000)/C2.durationSWR*100/C2.infMult)],
+              ...(p.hasVA?[["VA rating +$500/mo", $k((C2.drawNeeded-6000)/C2.durationSWR*100/C2.infMult)]]:[]),
+            ].map(([k,v])=><KV key={k} k={k} v={v}/>)}
+          </div>
+
+          <div style={S.card}>
+            <Head title="🔓 EARLY ACCESS STRATEGIES" color={C.purple}/>
+            <div style={{ background:"rgba(34,199,122,0.06)", border:"1px solid rgba(34,199,122,0.2)", borderRadius:10, padding:"12px 14px", marginBottom:12 }}>
+              <div style={{ fontSize:12, fontWeight:600, color:C.green, marginBottom:6 }}>
+                <Term>Rule of 55</Term> {p.retAge>=55?"✓ Applies":"— Does not apply (retiring before 55)"}
+              </div>
+              <div style={{ fontSize:10, color:C.muted, lineHeight:1.7 }}>
+                Separate from employer in the year you turn 55 → penalty-free 401k/TSP access immediately.<br/>
+                Applies to both traditional AND Roth portions of the same 401k.<br/>
+                <strong style={{color:C.red}}>Do NOT roll to IRA before 59½</strong> — you lose Rule of 55 on earnings.
+              </div>
+            </div>
+            <div style={{ background:"rgba(183,139,250,0.06)", border:"1px solid rgba(183,139,250,0.2)", borderRadius:10, padding:"12px 14px", marginBottom:12 }}>
+              <div style={{ fontSize:12, fontWeight:600, color:C.purple, marginBottom:6 }}>
+                <Term>Roth IRA</Term> — Open Now, Use Later
+              </div>
+              <div style={{ fontSize:10, color:C.muted, lineHeight:1.7 }}>
+                5-year clock started: {p.rothIRAOpenYear} · Satisfies: {p.rothIRAOpenYear+5}<br/>
+                Before 59½: direct contributions accessible anytime penalty-free<br/>
+                Earnings locked until 59½ or 5-year rule satisfied
+              </div>
+            </div>
+            <div style={{ background:p.retAge<55?"rgba(0,238,255,0.06)":"#07101e", border:`1px solid ${p.retAge<55?"rgba(0,238,255,0.2)":C.border}`, borderRadius:10, padding:"12px 14px" }}>
+              <div style={{ fontSize:12, fontWeight:600, color:p.retAge<55?C.cyan:C.muted, marginBottom:6 }}>
+                <Term>Roth Conversion Ladder</Term> {p.retAge<55?"✓ Relevant for your plan":"— Less critical (Rule of 55 covers you)"}
+              </div>
+              <div style={{ fontSize:10, color:C.muted, lineHeight:1.7 }}>
+                Convert traditional 401k → Roth IRA each year at retirement.<br/>
+                Each conversion accessible penalty-free after 5 years.<br/>
+                Bridge the gap with: {[
+                  p.hasVA && "guaranteed income",
+                  p.rothIRA > 0 && "Roth contributions",
+                  p.brokerage > 0 && "taxable brokerage",
+                  "low-income Roth conversion years"
+                ].filter(Boolean).join(", ") || "Roth contributions, brokerage, and low-income Roth conversions"}.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ── HEALTHCARE COST BY INCOME ── */}
+        <div style={S.card}>
+          <Head title="🏥 PRE-65 HEALTHCARE COST BY TAXABLE INCOME" color={C.red}
+            sub={`Projected to age ${p.retAge} (${CY+C2.ytt}) — all figures in future dollars · ${p.inflation}% inflation · healthcare inflates at ${(p.inflation*1.25).toFixed(1)}%/yr`}/>
+
+          {(()=>{
+            const married = p.filingStatus === "mfj";
+            // Inflation multipliers to retirement age
+            const hcInf = Math.pow(1 + p.inflation/100 * 1.25, C2.ytt); // healthcare inflates faster
+            const genInf = Math.pow(1 + p.inflation/100, C2.ytt);       // FPL tracks general inflation
+
+            // FPL projected to retirement year
+            const fpl2026 = married ? FPL_MFJ : FPL_SINGLE;
+            const fpl = fpl2026 * genInf;
+
+            // Unsubsidized premium projected to retirement year
+            const unsubBase2026 = (p.hasVA&&p.vaHealthVet ? p.vetHC : p.selfHC) + (married ? p.spouseHC : 0);
+            const unsubBase = unsubBase2026 * hcInf;
+
+            // ACA subsidy calculation — income is in future dollars, FPL is in future dollars
+            const calcACA = (incomeToday) => {
+              // Convert today's income to future dollars for FPL comparison
+              const incomeFuture = incomeToday * genInf;
+              if(incomeFuture <= 0) return { premium: unsubBase, subsidy: 0, note: "Medicaid eligible" };
+              const fplPct = incomeFuture / fpl * 100;
+              if(fplPct > 400) return { premium: unsubBase, subsidy: 0, note: "No subsidy >400% FPL" };
+              let reqPct;
+              if(fplPct <= 133)       reqPct = 0.0206;
+              else if(fplPct <= 150)  reqPct = 0.0309 + (fplPct-133)/(150-133)*(0.0412-0.0309);
+              else if(fplPct <= 200)  reqPct = 0.0412 + (fplPct-150)/(200-150)*(0.0618-0.0412);
+              else if(fplPct <= 250)  reqPct = 0.0618 + (fplPct-200)/(250-200)*(0.0824-0.0618);
+              else if(fplPct <= 300)  reqPct = 0.0824 + (fplPct-250)/(300-250)*(0.1030-0.0824);
+              else                    reqPct = 0.1030;
+              const maxContrib = incomeFuture * reqPct / 12;
+              const subsidy = Math.max(0, unsubBase - maxContrib);
+              const premium = Math.max(0, unsubBase - subsidy);
+              return { premium, subsidy, incomeFuture, fplPct };
+            };
+
+            // Income rows in today's dollars — user thinks in today's money
+            const incomes = [0,15000,25000,40000,50000,63000,75000,100000,150000,200000,250000];
+            // Subsidy cliff in today's dollars
+            const fpl400Future = fpl * 4;
+            const fpl400Today = fpl400Future / genInf;
+
+            return (
+              <div>
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:10, marginBottom:14 }}>
+                  {[
+                    { label:"Unsubsidized premium today", value:$(unsubBase2026)+"/mo", color:C.red },
+                    { label:`Projected at age ${p.retAge}`, value:$(unsubBase)+"/mo", color:C.red },
+                    { label:"Subsidy cliff (today's $)", value:$(fpl400Today)+"/yr", color:C.gold },
+                  ].map(({label,value,color})=>(
+                    <div key={label} style={{ background:"#07101e", borderRadius:8, padding:"10px 12px" }}>
+                      <div style={{ fontSize:10, color:C.muted, marginBottom:3 }}>{label}</div>
+                      <div style={{ ...S.mono, fontSize:14, fontWeight:700, color }}>{value}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ background:"rgba(244,185,66,0.06)", border:`1px solid rgba(244,185,66,0.2)`, borderRadius:8, padding:"10px 14px", marginBottom:14 }}>
+                  <div style={{ fontSize:11, fontWeight:600, color:C.gold, marginBottom:4 }}>
+                    ⚠️ Subsidy cliff: keep taxable income below {$(fpl400Today)}/yr (today's $) · {$(fpl400Future)}/yr (age {p.retAge} $)
+                  </div>
+                  <div style={{ fontSize:10, color:C.muted, lineHeight:1.5 }}>
+                    Income above this in retirement eliminates all subsidies. Managing Roth conversions and capital gains below this threshold
+                    saves {$(unsubBase - calcACA(fpl400Today-1).premium)}/mo at age {p.retAge}.
+                    {p.hasVA&&<span style={{ color:C.green }}> VA disability excluded from MAGI — doesn't count toward this limit.</span>}
+                  </div>
+                </div>
+
+                <div style={{ overflowX:"auto" }}>
+                  <table style={{ width:"100%", borderCollapse:"collapse", fontSize:11 }}>
+                    <thead>
+                      <tr style={{ borderBottom:`1px solid ${C.border}` }}>
+                        {[
+                          `Income (today's $)`,
+                          `Income (age ${p.retAge} $)`,
+                          "FPL %",
+                          `Premium at age ${p.retAge}`,
+                          "Monthly subsidy",
+                          `Annual savings`
+                        ].map(h=>(
+                          <th key={h} style={{ padding:"6px 8px", textAlign:"left", color:C.muted, fontWeight:500, fontSize:10 }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {incomes.map(inc=>{
+                        const r = calcACA(inc);
+                        const saving = unsubBase - r.premium;
+                        const rowColor = r.subsidy > 0 ? "rgba(34,199,122,0.04)" : "transparent";
+                        const isCliff = inc > 0 && calcACA(inc-1).subsidy > 0 && r.subsidy === 0;
+                        return (
+                          <tr key={inc} style={{ borderBottom:`1px solid ${isCliff?"rgba(242,86,112,0.4)":C.border}`, background:rowColor }}>
+                            <td style={{ ...S.mono, padding:"6px 8px", color:C.text, fontWeight:500 }}>{inc===0?"$0":$(inc)}</td>
+                            <td style={{ ...S.mono, padding:"6px 8px", color:C.muted }}>{inc===0?"$0":$(r.incomeFuture)}</td>
+                            <td style={{ ...S.mono, padding:"6px 8px", color:C.muted }}>{inc===0?"—":`${r.fplPct?.toFixed(0)}%`}</td>
+                            <td style={{ ...S.mono, padding:"6px 8px", color:r.subsidy>0?C.green:C.red, fontWeight:600 }}>{$(r.premium)}/mo</td>
+                            <td style={{ ...S.mono, padding:"6px 8px", color:r.subsidy>0?C.green:C.muted }}>{r.subsidy>0?$(r.subsidy)+"/mo":"—"}</td>
+                            <td style={{ ...S.mono, padding:"6px 8px", color:saving>0?C.green:C.muted }}>{saving>0?$k(saving*12)+"/yr":"—"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div style={{ marginTop:12, fontSize:10, color:C.muted, lineHeight:1.7 }}>
+                  Income shown in today's dollars for reference — future dollar column shows what that income will be worth at retirement.
+                  Premiums and FPL thresholds projected at {p.inflation}% general inflation · healthcare at {(p.inflation*1.25).toFixed(1)}%/yr.
+                  Actual premiums vary by state, age, and plan. VA disability excluded from ACA MAGI.
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+
+        <div style={{ textAlign:"center", marginTop:20 }}>
+          <button onClick={()=>setPage(3)} style={{ padding:"12px 32px", borderRadius:8, border:"none", cursor:"pointer", background:`linear-gradient(135deg,${C.cyanDim},${C.cyan})`, color:"#000", fontFamily:"'Outfit',sans-serif", fontSize:13, fontWeight:600 }}>
+            Edit Variables & See Math →
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  /* ════════════════════════════════════
+     PAGE 3 — VARIABLES, MATH & EDUCATION
+  ════════════════════════════════════ */
+  const Page3 = () => {
+    const onTrack = C2.projReal >= C2.fireNumRealAdj;
+    const MathRow = ({ label, formula, value, color, note }) => (
+      <div style={{ padding:"8px 0", borderBottom:`1px solid ${C.border}` }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+          <div style={{ flex:1 }}>
+            <span style={{ fontSize:12, color:C.dim }}>{label}</span>
+            {formula&&<div style={{ fontSize:10, color:C.muted, fontFamily:"'JetBrains Mono',monospace", marginTop:2, opacity:0.7 }}>{formula}</div>}
+            {note&&<div style={{ fontSize:10, color:C.muted, marginTop:2, lineHeight:1.5 }}>{note}</div>}
+          </div>
+          <span style={{ ...S.mono, fontSize:12, color:color||C.cyan, fontWeight:600, marginLeft:12 }}>{value}</span>
+        </div>
+      </div>
+    );
+
+    return (
+      <div style={{ maxWidth:1200, margin:"0 auto", padding:"24px 20px" }}>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
+
+          {/* ══ LEFT COLUMN ══ */}
+          <div>
+            {/* PROFILE */}
+            <div style={S.card}>
+              <Head title="👤 PROFILE & INCOME"/>
+              <div style={{ marginBottom:12 }}>
+                <div style={{ fontSize:11, color:C.muted, marginBottom:6 }}>Filing Status</div>
+                <div style={{ display:"flex", gap:8 }}>
+                  {[{v:"mfj",l:"Married Filing Jointly"},{v:"single",l:"Single / Filing Separately"}].map(opt=>(
+                    <button key={opt.v} onClick={()=>setP({...p,filingStatus:opt.v})} style={{
+                      flex:1, padding:"8px 12px", borderRadius:8, cursor:"pointer",
+                      fontFamily:"'Outfit',sans-serif", fontSize:11, fontWeight:500,
+                      background:p.filingStatus===opt.v?"rgba(0,238,255,0.1)":"#07101e",
+                      color:p.filingStatus===opt.v?C.cyan:C.dim,
+                      border:`1px solid ${p.filingStatus===opt.v?C.cyan:C.border}`,
+                    }}>{opt.l}</button>
+                  ))}
+                </div>
+              </div>
+              <Field label="Current Age" value={p.curAge} onChange={v=>setP({...p,curAge:v})} step={1} min={18} max={70}/>
+              <Field label="Target Retirement Age" value={p.retAge} onChange={v=>setP({...p,retAge:v})} step={1} min={40} max={80}/>
+              <Field label="Plan To Age" value={p.planAge} onChange={v=>setP({...p,planAge:v})} step={1} min={75} max={100} note="How long your plan needs to last. 90 is a reasonable baseline."/>
+              <Field label="Gross Annual Salary" value={p.salary} onChange={v=>setP({...p,salary:v})} prefix="$" step={1000}/>
+              <Field label="Annual Salary Growth Rate" value={p.salaryGrowth} onChange={v=>setP({...p,salaryGrowth:v})} suffix="%" step={0.5} note="3% tracks inflation"/>
+              {p.filingStatus==="mfj"&&<Field label="Spouse / Partner Annual Income" value={p.spouseIncome} onChange={v=>setP({...p,spouseIncome:v})} prefix="$"/>}
+              <Field label="State Income Tax Rate" value={p.stateTax} onChange={v=>setP({...p,stateTax:v})} suffix="%" step={0.1} note="0% for TX, FL, WA, NV, SD, WY, AK"/>
+            </div>
+
+            {/* SOCIAL SECURITY */}
+            <div style={S.card}>
+              <Head title="📋 SOCIAL SECURITY" color={C.gold}/>
+              <Toggle label="I plan to take Social Security" checked={p.hasSS} onChange={v=>setP({...p,hasSS:v})} note="SS and VA disability can be received simultaneously — completely independent programs."/>
+              {p.hasSS&&<>
+                <Field label="Estimated monthly benefit at full retirement age" value={p.ssMonthly} onChange={v=>setP({...p,ssMonthly:v})} prefix="$" note="Get your real estimate at ssa.gov/myaccount"/>
+                <Field label="What age will you claim SS?" value={p.ssAge} onChange={v=>setP({...p,ssAge:v})} step={1} min={62} max={70} note="62=reduced · 67=full · 70=maximum (+32% vs 67)"/>
+                <div style={{ background:"#07101e", borderRadius:8, padding:"10px 12px" }}>
+                  <KV k="Monthly at claim age" v={$(p.ssMonthly)} vc={C.gold}/>
+                  <KV k="Portfolio equivalent (today's $)" v={$k(C2.ssEquiv)} vc={C.gold} bold/>
+                  {p.ssAge>p.retAge&&<KV k="Bridge period from portfolio" v={`${p.ssAge-p.retAge} yrs`} vc={C.orange}/>}
+                </div>
+              </>}
+            </div>
+
+            {/* VA DISABILITY */}
+            <div style={S.card}>
+              <Head title="💰 NON-TAXABLE GUARANTEED INCOME" color={C.green}/>
+              <Toggle label="I receive non-taxable guaranteed income" checked={p.hasVA} onChange={v=>setP({...p,hasVA:v})} note="VA disability, pension, or any tax-free income — excluded from MAGI"/>
+              {p.hasVA&&<>
+                <Field label="Monthly non-taxable income" value={p.vaMonthly} onChange={v=>setP({...p,vaMonthly:v})} prefix="$" note={p.filingStatus==="mfj"
+                  ? "2026 VA rates (veteran + spouse, no children) — 30%: $617 · 40%: $883 · 50%: $1,242 · 60%: $1,567 · 70%: $1,961 · 80%: $2,277 · 90%: $2,559 · 100%: $4,158"
+                  : "2026 VA rates (veteran alone, no dependents) — 10%: $176 · 30%: $538 · 40%: $796 · 50%: $1,133 · 60%: $1,435 · 70%: $1,808 · 80%: $2,102 · 90%: $2,362 · 100%: $3,939"
+                }/>
+                <Field label="Annual COLA / growth rate" value={p.vaCola} onChange={v=>setP({...p,vaCola:v})} suffix="%" step={0.1} note="VA tied to CPI — historically 2–3%/yr. Use 0% for fixed pensions."/>
+                <Toggle label="Using VA healthcare" checked={p.vaHealthVet} onChange={v=>setP({...p,vaHealthVet:v})} note="50%+ rating → Priority Group 2"/>
+                <div style={{ background:"rgba(34,199,122,0.07)", border:"1px solid rgba(34,199,122,0.2)", borderRadius:8, padding:"10px 12px" }}>
+                  <KV k="Monthly (today)" v={$(p.vaMonthly)} vc={C.green}/>
+                  <KV k={`At age ${p.retAge} (future $, COLA-adjusted)`} v={$(C2.vaAtRet/12)} vc={C.green}/>
+                  <KV k="Portfolio equivalent (today's $)" v={$k(C2.vaEquiv)} vc={C.green} bold/>
+                </div>
+              </>}
+            </div>
+
+            {/* HEALTHCARE */}
+            <div style={S.card}>
+              <Head title="🏥 HEALTHCARE IN RETIREMENT" color={C.orange}/>
+
+              {/* ACA / Manual toggle */}
+              <div style={{ marginBottom:12 }}>
+                <div style={{ fontSize:11, color:C.muted, marginBottom:6 }}>Pre-65 healthcare cost method</div>
+                <div style={{ display:"flex", gap:8 }}>
+                  {[
+                    { v:"aca", l:"ACA Estimate", note:"Auto-calculates based on income" },
+                    { v:"manual", l:"Enter Manually", note:"Use your own numbers" },
+                  ].map(opt=>(
+                    <button key={opt.v} onClick={()=>setP({...p,hcMode:opt.v})} style={{
+                      flex:1, padding:"8px 10px", borderRadius:8, cursor:"pointer", textAlign:"center",
+                      fontFamily:"'Outfit',sans-serif",
+                      background:p.hcMode===opt.v?"rgba(242,86,112,0.1)":"#07101e",
+                      color:p.hcMode===opt.v?C.orange:C.dim,
+                      border:`1px solid ${p.hcMode===opt.v?C.orange:C.border}`,
+                    }}>
+                      <div style={{ fontSize:12, fontWeight:600 }}>{opt.l}</div>
+                      <div style={{ fontSize:10, color:C.muted, marginTop:2 }}>{opt.note}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {p.hcMode === "aca" ? (
+                <div>
+                  {p.hasVA&&p.vaHealthVet&&(
+                    <Field label="Your VA copays (monthly)" value={p.vetHC} onChange={v=>setP({...p,vetHC:v})} prefix="$" note="Priority Group 2: typically $0–50/mo"/>
+                  )}
+                  <Slider
+                    label="Estimated annual taxable income in retirement"
+                    value={p.retTaxableIncome}
+                    onChange={v=>setP({...p,retTaxableIncome:v})}
+                    min={0} max={250000} step={1000}
+                    fmt={v=>`${$(v)}/yr`}
+                  />
+                  <div style={{ fontSize:10, color:C.muted, marginBottom:10, lineHeight:1.5 }}>
+                    Includes portfolio draws, SS, 401k withdrawals. VA disability excluded from ACA MAGI.
+                  </div>
+                  {(()=>{
+                    const married = p.filingStatus === "mfj";
+                    const r = calcACA(p.retTaxableIncome);
+                    const fpl = married ? FPL_MFJ : FPL_SINGLE;
+                    const unsubRaw = (p.hasVA&&p.vaHealthVet ? p.vetHC : p.selfHC) + (married ? p.spouseHC : 0);
+                    return (
+                      <div style={{ background:"rgba(242,86,112,0.07)", border:`1px solid rgba(242,86,112,0.2)`, borderRadius:8, padding:"10px 12px" }}>
+                        <KV k="FPL %" v={`${r.fplPct.toFixed(0)}% (${$(fpl*4)}/yr cliff)`} vc={r.fplPct>400?C.red:C.gold}/>
+                        <KV k="Monthly subsidy" v={r.subsidy>0?$(r.subsidy)+"/mo":"None — above 400% FPL"} vc={r.subsidy>0?C.green:C.muted}/>
+                        <KV k="Your pre-65 monthly premium" v={$(r.premium)+"/mo"} vc={C.orange} bold/>
+                        <KV k="Annual healthcare cost" v={$(r.premium*12)+"/yr"} vc={C.red}/>
+                        {r.subsidy>0&&<div style={{ fontSize:10, color:C.green, marginTop:4 }}>
+                          Subsidy saves {$(r.subsidy*12)}/yr vs unsubsidized {$(unsubRaw)}/mo
+                        </div>}
+                        <div style={{ fontSize:10, color:C.muted, marginTop:6 }}>
+                          Used in your projection · inflated at {(p.inflation*1.25).toFixed(1)}%/yr
+                        </div>
+                      </div>
+                    );
+                  })()}
+                  {/* Still need unsubsidized baseline inputs */}
+                  <div style={{ marginTop:10 }}>
+                    <SectionDivider label="UNSUBSIDIZED BASELINE (used if above 400% FPL)" color={C.muted}/>
+                    {!p.hasVA&&<Field label="Your unsubsidized monthly premium" value={p.selfHC} onChange={v=>setP({...p,selfHC:v})} prefix="$" note="ACA benchmark Silver plan age 55–64: ~$700–1,400/mo"/>}
+                    {p.filingStatus==="mfj"&&<Field label="Spouse unsubsidized monthly premium" value={p.spouseHC} onChange={v=>setP({...p,spouseHC:v})} prefix="$"/>}
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  {p.hasVA&&p.vaHealthVet
+                    ? <Field label="Your VA copays (monthly)" value={p.vetHC} onChange={v=>setP({...p,vetHC:v})} prefix="$" note="Priority Group 2: typically $0–50/mo"/>
+                    : <Field label="Your pre-65 healthcare (monthly)" value={p.selfHC} onChange={v=>setP({...p,selfHC:v})} prefix="$" note="2026 ACA unsubsidized: ~$700–1,400/mo age 55–64"/>
+                  }
+                  {p.filingStatus==="mfj"&&<Field label="Spouse pre-65 healthcare (monthly)" value={p.spouseHC} onChange={v=>setP({...p,spouseHC:v})} prefix="$"/>}
+                </div>
+              )}
+
+              <Field label="Post-65 Medicare + supplement per person" value={p.post65HC} onChange={v=>setP({...p,post65HC:v})} prefix="$" note="2026: Part B $202.90 + Part D ~$39 + Medigap ~$180 = ~$420/person"/>
+            </div>
+
+            {/* ACCOUNTS */}
+            <div style={S.card}>
+              <Head title="📂 ACCOUNT BALANCES"/>
+              <SectionDivider label="TAX-ADVANTAGED RETIREMENT" color={C.cyan}/>
+              <Field label="Traditional 401k / 403b / TSP" value={p.trad401kBal} onChange={v=>setP({...p,trad401kBal:v})} prefix="$" step={500} lc={C.cyan} note="Pre-tax · taxable on withdrawal · includes TSP traditional"/>
+              <Field label="Roth 401k / Roth TSP" value={p.roth401kBal} onChange={v=>setP({...p,roth401kBal:v})} prefix="$" step={500} lc={C.cyan} note="After-tax · tax-free on qualified withdrawal · keep in plan for Rule of 55"/>
+              <Field label={<><Term>Roth IRA</Term> Balance</>} value={p.rothIRA} onChange={v=>setP({...p,rothIRA:v})} prefix="$" step={500} lc={C.cyan}/>
+              <Field label={<><Term>HSA</Term> Balance</>} value={p.hsa} onChange={v=>setP({...p,hsa:v})} prefix="$" step={100} note="Triple tax-advantaged" lc={C.purple}/>
+              <SectionDivider label="TAXABLE" color={C.gold}/>
+              <Field label="Brokerage / Taxable Investments" value={p.brokerage} onChange={v=>setP({...p,brokerage:v})} prefix="$" step={500} lc={C.gold}/>
+              <SectionDivider label="CASH" color={C.green}/>
+              <Field label="Savings / Checking / Emergency Fund" value={p.cash} onChange={v=>setP({...p,cash:v})} prefix="$" step={500} note="Target: 3–6 months of total expenses" lc={C.green}/>
+              <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:10, marginTop:8 }}>
+                <KV k="Traditional 401k / TSP (taxable)" v={$(C2.trad401kTotal)} vc={C.orange}/>
+                <KV k="Roth 401k (tax-free)" v={$(C2.roth401kTotal)} vc={C.green}/>
+                <KV k="Roth fraction" v={pct(C2.rothFraction*100)} vc={C2.rothFraction>0.4?C.green:C.gold} bold/>
+                <KV k="Effective withdrawal tax rate" v={pct(C2.withdrawalTaxRate*100)} vc={C.muted}/>
+                <div style={{ fontSize:10, color:C.muted, marginBottom:4 }}>Lower is better — more Roth = lower effective rate</div>
+                <KV k="Total invested (excl. cash)" v={$(C2.totalInvested)} vc={C.cyan} bold/>
+                <KV k="Total liquid (incl. cash)" v={$(C2.totalLiquid)} vc={C.green} bold/>
+                <KV k="FIRE progress today" v={pct(C2.pctFunded)} vc={C2.pctFunded>=50?C.gold:C.red} bold/>
+              </div>
+            </div>
+
+            {/* CONTRIBUTIONS */}
+            <div style={S.card}>
+              <Head title="💰 CONTRIBUTIONS"/>
+              <Slider label={<><Term>Traditional 401k</Term> / TSP (pre-tax)</>} value={p.trad401kPct} onChange={v=>setP({...p,trad401kPct:v})} min={0} max={25} fmt={v=>`${v}% = ${$(p.salary*v/100)}/yr`}/>
+              <Slider label={<><Term>Roth 401k</Term> (post-tax)</>} value={p.roth401kPct} onChange={v=>setP({...p,roth401kPct:v})} min={0} max={25} fmt={v=>`${v}% = ${$(p.salary*v/100)}/yr`}/>
+              <Slider label={<><Term>Employer Match</Term></>} value={p.empMatchPct} onChange={v=>setP({...p,empMatchPct:v})} min={0} max={15} fmt={v=>`${v}% = ${$(p.salary*v/100)}/yr`} color={C.gold}/>
+              <Slider label="Employer Baseline Contribution" value={p.empBasePct} onChange={v=>setP({...p,empBasePct:v})} min={0} max={10} fmt={v=>`${v}% = ${$(p.salary*v/100)}/yr`} color={C.gold}/>
+              <Field label={<><Term>HSA</Term> annual contribution (your portion)</>} value={p.hsaAnnual} onChange={v=>setP({...p,hsaAnnual:v})} prefix="$" step={100} note="2026: $8,750 family · $4,400 individual (+$1,000 at 55+) · Priority #1 after employer match"/>
+              <Field label="Employer HSA contribution (annual)" value={p.hsaEmployer} onChange={v=>setP({...p,hsaEmployer:v})} prefix="$" step={100} note="Pre-tax · excluded from your MAGI · counts toward combined IRS limit" lc={C.gold}/>
+              <Field label={<><Term>Roth IRA</Term> annual contribution</>} value={p.rothIRAContrib} onChange={v=>setP({...p,rothIRAContrib:Math.min(v,rothIRALimit)})} prefix="$" step={500} note={`2026 max: ${$(rothIRALimit)}${p.curAge>=50?" (age 50+ catch-up included)":""} · limit rises to $8,000 at age 50`}/>
+              <Field label="Year Roth IRA was first opened" value={p.rothIRAOpenYear} onChange={v=>setP({...p,rothIRAOpenYear:v})} step={1} min={2000} max={CY} note={`5-year rule satisfies: ${p.rothIRAOpenYear+5} · ${(CY-p.rothIRAOpenYear)>=5?"✓ Already satisfied":"⏳ "+(5-(CY-p.rothIRAOpenYear))+" years remaining"}`}/>
+              <Field label="Extra monthly → taxable brokerage" value={p.monthlyBrokerageContrib} onChange={v=>setP({...p,monthlyBrokerageContrib:v})} prefix="$" step={50} note="Overflow after maxing HSA + Roth IRA"/>
+              <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:10, marginTop:8 }}>
+                <KV k="Your 401k/TSP contribution" v={$(C2.tradAmt+C2.rothAmt)+"/yr"} vc={C.cyan}/>
+                <KV k="Employer contributions" v={$(C2.empTotal)+"/yr"} vc={C.gold} bold/>
+                <KV k="HSA (your contribution)" v={$(p.hsaAnnual)+"/yr"} vc={C.purple}/>
+                {p.hsaEmployer>0&&<KV k="HSA (employer contribution)" v={$(p.hsaEmployer)+"/yr"} vc={C.gold}/>}
+                <KV k="Roth IRA" v={$(p.rothIRAContrib)+"/yr"} vc={C.cyan}/>
+                <KV k="Total to accounts / year" v={$k(C2.annualToAccounts+p.monthlyBrokerageContrib*12)} vc={C.green} bold/>
+              </div>
+            </div>
+          </div>
+
+          {/* ══ RIGHT COLUMN ══ */}
+          <div>
+            {/* DEBTS */}
+            <div style={S.card}>
+              <Head title="💳 DEBTS"/>
+              {[
+                { nameK:"debt1Name", balK:"debt1Bal", rateK:"debt1Rate", moK:"debt1Monthly", po:C2.debt1, c:C.orange },
+                { nameK:"debt2Name", balK:"debt2Bal", rateK:"debt2Rate", moK:"debt2Monthly", po:C2.debt2, c:C.gold },
+                { nameK:"debt3Name", balK:"debt3Bal", rateK:"debt3Rate", moK:"debt3Monthly", po:C2.debt3, c:C.purple, note:"Use 0% rate for 401k loans" },
+              ].map(({ nameK,balK,rateK,moK,po,c,note },i)=>(
+                <div key={i} style={{ background:"#07101e", borderRadius:10, padding:"12px 14px", marginBottom:10 }}>
+                  <input value={p[nameK]} onChange={e=>setP({...p,[nameK]:e.target.value})}
+                    style={{ ...S.inp, fontSize:13, fontWeight:600, marginBottom:8, color:c }}/>
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8 }}>
+                    <div><label style={S.label}>Balance</label><div style={{ display:"flex", gap:3 }}><span style={{ color:C.muted, fontSize:12 }}>$</span><input type="text" inputMode="decimal" value={p[balK]} onChange={e=>setP({...p,[balK]:parseFloat(e.target.value.replace(/[^0-9.]/g,""))||0})} style={{ ...S.inp, flex:1 }}/></div></div>
+                    <div><label style={S.label}>Rate %</label><input type="text" inputMode="decimal" value={p[rateK]} onChange={e=>setP({...p,[rateK]:parseFloat(e.target.value.replace(/[^0-9.]/g,""))||0})} style={S.inp}/></div>
+                    <div><label style={S.label}>Monthly $</label><input type="text" inputMode="decimal" value={p[moK]} onChange={e=>setP({...p,[moK]:parseFloat(e.target.value.replace(/[^0-9.]/g,""))||0})} style={S.inp}/></div>
+                  </div>
+                  {note&&<div style={{ fontSize:10, color:C.muted, marginTop:4 }}>{note}</div>}
+                  {p[balK]>0&&<div style={{ fontSize:10, color:c, marginTop:4 }}>Payoff: ~{po.year} · {$(po.totalInterest)} total interest</div>}
+                </div>
+              ))}
+              {C2.totalNonMortDebt>0&&<div style={{ background:"rgba(34,199,122,0.06)", borderRadius:8, padding:"10px 12px", marginTop:4 }}>
+                <KV k="Total non-mortgage debt" v={$(C2.totalNonMortDebt)} vc={C.orange}/>
+                <KV k="Monthly payments freed at payoff" v={$(C2.monthlyDebtPayments)} vc={C.green} bold/>
+                <KV k="Portfolio equiv. if invested" v={$k(C2.monthlyDebtPayments*12/(p.swr/100))} vc={C.green} bold/>
+              </div>}
+            </div>
+
+            {/* HOUSING */}
+            <div style={S.card}>
+              <Head title="🏠 HOUSING" color={C.gold}/>
+              <Toggle label="I have a mortgage" checked={p.hasMortgage} onChange={v=>setP({...p,hasMortgage:v,...(!v?{propTax:0,mortBal:0,mortPI:0,mortTotal:0}:{})})}/>
+              {p.hasMortgage&&<>
+                <Field label="Current balance" value={p.mortBal} onChange={v=>setP({...p,mortBal:v})} prefix="$" step={1000}/>
+                <Field label="Monthly P&I payment" value={p.mortPI} onChange={v=>setP({...p,mortPI:v,mortTotal:v})} prefix="$" note="Principal & interest only — property tax and insurance entered separately"/>
+                <Field label="Interest rate" value={p.mortRate} onChange={v=>setP({...p,mortRate:v})} suffix="%" step={0.05}/>
+                <div style={{ background:"#07101e", borderRadius:8, padding:"10px 12px", marginBottom:10 }}>
+                  <KV k="Payoff estimate" v={`~${C2.mort.year} (${C2.mort.months} mo)`} vc={C.gold} bold/>
+                  <KV k="Total interest remaining" v={$(C2.mort.totalInterest)} vc={C.red}/>
+                  {C2.mort.year <= (CY+C2.ytt)
+                    ? <div style={{ fontSize:10, color:C.green, marginTop:4 }}>✓ Paid off before retirement age {p.retAge} — not included in retirement expenses.</div>
+                    : <div style={{ fontSize:10, color:C.orange, marginTop:4 }}>Active at retirement — ${$(p.mortTotal)}/mo included in retirement expenses until {C2.mort.year}.</div>
+                  }
+                  {p.mortRate<4&&<div style={{ fontSize:10, color:C.green, marginTop:2 }}>Low rate — prioritize investing over extra payments.</div>}
+                  {p.mortRate>=6&&<div style={{ fontSize:10, color:C.orange, marginTop:2 }}>High rate — extra payments may be worth it.</div>}
+                </div>
+              </>}
+              <Field label="Property Tax (monthly avg)" value={p.propTax} onChange={v=>setP({...p,propTax:v})} prefix="$" step={25} note="Annual tax ÷ 12 · Inflates at 1.5× general rate in projections"/>
+              <Field label="Home Insurance (monthly)" value={p.homeInsurance} onChange={v=>setP({...p,homeInsurance:v})} prefix="$" note="Inflates at 1.5× general rate in projections"/>
+            </div>
+
+            {/* EXPENSES */}
+            <div style={S.card}>
+              <Head title="💵 MONTHLY EXPENSES"/>
+              <Field label="Food / Groceries" value={p.food} onChange={v=>setP({...p,food:v})} prefix="$"/>
+              <Field label="Electric" value={p.electric} onChange={v=>setP({...p,electric:v})} prefix="$"/>
+              <Field label="Water & Sewer" value={p.water} onChange={v=>setP({...p,water:v})} prefix="$"/>
+              <Field label="Phone" value={p.phone} onChange={v=>setP({...p,phone:v})} prefix="$"/>
+              <Field label="Internet" value={p.internet} onChange={v=>setP({...p,internet:v})} prefix="$"/>
+              <Field label="Car Insurance" value={p.carInsurance} onChange={v=>setP({...p,carInsurance:v})} prefix="$"/>
+              <Field label="Gas / Transportation" value={p.gasMonthly} onChange={v=>setP({...p,gasMonthly:v})} prefix="$"/>
+              <Field label="Other (misc. monthly)" value={p.other} onChange={v=>setP({...p,other:v})} prefix="$"/>
+              <div style={{ borderTop:`1px solid ${C.border}`, paddingTop:8, marginTop:4 }}>
+                <KV k="Total living expenses" v={$(C2.livingMonthly)+"/mo"} vc={C.muted} bold/>
+                <KV k="Total all-in expenses" v={$(C2.totalExp)+"/mo"} vc={C.red} bold/>
+                <KV k="Net monthly cash flow" v={$(C2.cashFlow)} vc={C2.cashFlow>=0?C.cyan:C.red} bold/>
+              </div>
+            </div>
+
+            {/* ASSUMPTIONS */}
+            <div style={S.card}>
+              <Head title="⚙️ ASSUMPTIONS"/>
+              <Slider label="Portfolio growth rate" value={p.growth} onChange={v=>setP({...p,growth:v})} min={3} max={14} step={0.5} fmt={v=>`${v}%/yr`}/>
+              <div style={{ fontSize:10, color:C.muted, marginBottom:12, lineHeight:1.5 }}>S&P 500 historical: ~10% nominal, ~7% real. Use 7–9% for diversified portfolio.</div>
+              <Slider label="Inflation rate" value={p.inflation} onChange={v=>setP({...p,inflation:v})} min={1} max={6} step={0.5} fmt={v=>`${v}%/yr`}/>
+              <div style={{ fontSize:10, color:C.muted, marginBottom:12, lineHeight:1.5 }}>Fed target is 2%. Applied to all future expenses. Housing inflates at 1.5×.</div>
+              <Slider label={<><Term>Safe Withdrawal Rate</Term></>} value={p.swr} onChange={v=>setP({...p,swr:v})} min={2} max={6} step={0.25} fmt={v=>`${v}% = ${Math.round(100/v)}x rule`}/>
+              <div style={{ fontSize:10, color:C.muted, marginBottom:12, lineHeight:1.5 }}>4% = Trinity Study (30yr). 3.5% = early retirement (35–50yr). 3% = perpetual portfolio.</div>
+              <Slider label="Plan to age" value={p.planAge} onChange={v=>setP({...p,planAge:v})} min={80} max={105} fmt={v=>`Age ${v}`}/>
+              <Field label="Payroll HC premium per paycheck" value={p.hcPremiumPerPaycheck} onChange={v=>setP({...p,hcPremiumPerPaycheck:v})} prefix="$" note="Pre-tax Section 125 deduction — reduces AGI"/>
+            </div>
+
+            {/* MATH TRANSPARENCY */}
+            <div style={{ ...S.card, border:`1px solid rgba(0,238,255,0.15)` }}>
+              <Head title="🔢 MATH TRANSPARENCY" color={C.cyan} sub="Every calculation shown — verify the numbers yourself"/>
+
+              <SectionDivider label="TAXES" color={C.muted}/>
+              <MathRow label="Gross salary" value={$(p.salary)} color={C.text}/>
+              <MathRow label="Pre-tax deductions" formula={`401k ${$(C2.tradAmt)} + HSA ${$(p.hsaAnnual)} + HC ${$(C2.hcPremAnnual)}`} value={`(${$(C2.preTax)})`} color={C.orange}/>
+              <MathRow label={<Term>MAGI</Term>} formula="Salary − pre-tax deductions" value={$(C2.agi)} color={C.gold} note="Determines Roth IRA eligibility and ACA subsidy thresholds"/>
+              <MathRow label={`Federal income tax (2026 ${p.filingStatus==="mfj"?"MFJ":"Single"} brackets)`} formula={`Taxable = MAGI − ${$(p.filingStatus==="mfj"?32200:16100)} standard deduction`} value={$(C2.fedTax)} color={C.red}/>
+              <MathRow label="FICA (Social Security + Medicare)" formula="Salary × 7.65%" value={$(C2.fica)} color={C.red}/>
+              <MathRow label="State tax" formula={`AGI × ${p.stateTax}%`} value={$(C2.stateTaxAmt)} color={C.red}/>
+              <MathRow label="Monthly take-home" formula="(Salary − all deductions − taxes) ÷ 12" value={$(C2.takeHome)+"/mo"} color={C.green} bold/>
+
+              <SectionDivider label="FIRE NUMBER" color={C.muted}/>
+              <MathRow label="Years to retirement" formula={`Age ${p.retAge} − Age ${p.curAge}`} value={`${C2.ytt} years`} color={C.text}/>
+              <MathRow label="Inflation multiplier" formula={`(1 + ${p.inflation}%)^${C2.ytt}`} value={C2.infMult.toFixed(4)+"×"} color={C.muted}/>
+              <MathRow label="Annual living expenses (inflated)" formula={`${$(C2.livingMonthly)}/mo × 12 × ${p.retRatio}% × inflation multiplier`} value={$(C2.livInfl)} color={C.muted}/>
+              <MathRow label="Healthcare at retirement" value={$(C2.hcAtRet)+"/yr"} color={C.orange}/>
+              <MathRow label="Mortgage at retirement" value={$(C2.mortAtRet)+"/yr"} color={C2.mortAtRet>0?C.orange:C.green} note={C2.mortAtRet===0?"Paid off ✓":"Still active"}/>
+              <MathRow label="Total expenses needed" formula="Living + HC + Mortgage + Extras" value={$(C2.totalNeed)+"/yr"} color={C.red} bold/>
+              <MathRow label="VA disability at retirement" formula={`${$(p.vaMonthly*12)}/yr × (1+${p.vaCola}%)^${C2.ytt}`} value={$(C2.vaAtRet)+"/yr"} color={C.green}/>
+              <MathRow label="SS at retirement" value={$(C2.ssAtRet)+"/yr"} color={C.gold}/>
+              <MathRow label="Portfolio draw needed" formula="Total expenses − guaranteed income" value={$(C2.drawNeeded)+"/yr"} color={C.orange} bold/>
+              <MathRow label={<><Term>SWR</Term> (duration-adjusted)</>} formula={`${C2.retirementYears}-year retirement → ${C2.durationSWR}%`} value={C2.durationSWR+"%"} color={C.cyan} note={C2.durationSWR<p.swr?"Auto-adjusted down for long retirement horizon":"Your setting"}/>
+              <MathRow label={<Term>FIRE Number</Term>} formula={`Draw needed ÷ SWR = ${$(C2.drawNeeded)} ÷ ${C2.durationSWR}%`} value={$k(C2.fireNum)+" (future $)"} color={C.gold}/>
+              <MathRow label="FIRE Number (today's dollars)" formula="Future FIRE # ÷ inflation multiplier" value={$k(C2.fireNumRealAdj)} color={C.gold} bold/>
+
+              <SectionDivider label="PROJECTION" color={C.muted}/>
+              <MathRow label="Current total invested" value={$(C2.totalInvested)} color={C.text}/>
+              <MathRow label="Annual contributions" formula={`401k + employer + HSA + Roth IRA + brokerage`} value={$k(C2.annualToAccounts+p.monthlyBrokerageContrib*12)+"/yr"} color={C.cyan}/>
+              <MathRow label="Projected at retirement (future $)" formula={`Compound growth over ${C2.ytt} years at ${p.growth}%`} value={$k(C2.proj)} color={C.cyan}/>
+              <MathRow label="Projected (today's dollars)" formula="Future projection ÷ inflation multiplier" value={$k(C2.projReal)} color={onTrack?C.green:C.red} bold/>
+              <MathRow label="Surplus / Deficit" formula="Projected − FIRE Number (both today's $)" value={(C2.surplus>=0?"+":"")+$k(C2.surplus)} color={C2.surplus>=0?C.green:C.red} bold/>
+              <MathRow label="Funded today" formula="Current invested ÷ FIRE Number" value={pct(C2.pctFunded)} color={C2.pctFunded>=50?C.gold:C.red}/>
+            </div>
+
+            {/* CONTRIBUTION OPTIMIZER */}
+            <div style={S.card}>
+              <Head title="💰 CONTRIBUTION OPTIMIZER" sub="How to deploy your savings most efficiently"/>
+              <Field label="Monthly savings budget" value={p.monthlySavingsBudget} onChange={v=>setP({...p,monthlySavingsBudget:v})} prefix="$" step={50} note={`${$(p.monthlySavingsBudget*12)}/yr to distribute across accounts`}/>
+              {(()=>{
+                const annualBudget = p.monthlySavingsBudget * 12;
+                const empMatchNeeded = p.salary * (p.empMatchPct / 100);
+                const hsaMax = hsaLimitAnnual;
+                const rothIRAMax = rothIRALimit;
+                let remaining = annualBudget;
+                const steps = [];
+                const matchContrib = Math.min(remaining, empMatchNeeded); remaining -= matchContrib;
+                steps.push({ n:1, label:"401k to capture full match", amount:matchContrib, color:C.green, free:p.salary*p.empMatchPct/100 });
+                const hsaGap = Math.max(0, hsaMax - p.hsaAnnual);
+                const hsaContrib = Math.min(remaining, hsaGap); remaining -= hsaContrib;
+                steps.push({ n:2, label:"HSA — Triple Tax Advantage", amount:hsaContrib, color:C.purple, note:hsaGap===0?`✓ Maxed`:undefined });
+                const rothGap = Math.max(0, rothIRAMax - p.rothIRAContrib);
+                const rothContrib = Math.min(remaining, rothGap); remaining -= rothContrib;
+                steps.push({ n:3, label:"Roth IRA", amount:rothContrib, color:C.cyan, note:rothGap===0?`✓ Maxed`:undefined });
+                const extra401k = Math.min(remaining, Math.max(0, k401kLimit-(p.salary*(p.trad401kPct+p.roth401kPct)/100))); remaining -= extra401k;
+                steps.push({ n:4, label:"401k beyond match", amount:extra401k, color:"#0bbbd4" });
+                steps.push({ n:5, label:"Taxable brokerage (overflow)", amount:remaining, color:C.gold });
+                return steps.map(step=>(
+                  <div key={step.n} style={{ display:"flex", gap:8, padding:"8px 0", borderBottom:`1px solid ${C.border}` }}>
+                    <div style={{ ...S.mono, fontSize:13, color:step.amount>0?step.color:C.muted, fontWeight:700, minWidth:16, opacity:step.amount>0?1:0.35 }}>{step.n}</div>
+                    <div style={{ flex:1 }}>
+                      <div style={{ display:"flex", justifyContent:"space-between" }}>
+                        <span style={{ fontSize:12, color:step.amount>0?C.text:C.muted, opacity:step.amount>0?1:0.5 }}>{step.label}</span>
+                        <span style={{ ...S.mono, fontSize:12, color:step.amount>0?step.color:C.muted, fontWeight:600 }}>{step.amount>0?$(step.amount)+"/yr":"—"}</span>
+                      </div>
+                      {step.free>0&&<div style={{ fontSize:10, color:C.green }}>+ {$(step.free)}/yr employer FREE</div>}
+                      {step.note&&<div style={{ fontSize:10, color:C.muted }}>{step.note}</div>}
+                    </div>
+                  </div>
+                ));
+              })()}
+              <div style={{ marginTop:10, background:"rgba(34,199,122,0.06)", borderRadius:8, padding:"10px 12px" }}>
+                <KV k="Your annual budget" v={$(p.monthlySavingsBudget*12)} vc={C.cyan}/>
+                <KV k="Employer match (free)" v={$(p.salary*p.empMatchPct/100)} vc={C.green} bold/>
+                <KV k="Total hitting market" v={$(p.monthlySavingsBudget*12+p.salary*p.empMatchPct/100)} vc={C.green} bold/>
+              </div>
+            </div>
+
+            {/* MAGI MODELING */}
+            <div style={S.card}>
+              <Head title="🧮 MAGI REDUCTION MODELING" color={C.purple} sub="How pre-tax contributions affect eligibility"/>
+              <div style={{ fontSize:10, color:C.muted, lineHeight:1.6, marginBottom:10 }}>
+                Pre-tax 401k and HSA contributions reduce your <Term>MAGI</Term> — which can unlock <Term>Roth IRA</Term> eligibility and <Term>ACA</Term> subsidies at higher income levels.
+              </div>
+              {(()=>{
+                const magiAfter = Math.max(0, p.salary + (p.spouseIncome||0) - p.salary*(p.trad401kPct/100) - p.hsaAnnual - p.hcPremiumPerPaycheck*PAYCHECKS_YR);
+                const mfj2 = p.filingStatus === "mfj";
+                const rothLow  = mfj2 ? 242000 : 153000;
+                const rothHigh = mfj2 ? 252000 : 168000;
+                const eligible = magiAfter < rothHigh;
+                return <>
+                  <KV k="Gross income" v={$(p.salary+(p.spouseIncome||0))} vc={C.text}/>
+                  <KV k="− Traditional 401k" v={`(${$(p.salary*p.trad401kPct/100)})`} vc={C.cyan}/>
+                  <KV k="− HSA" v={`(${$(p.hsaAnnual)})`} vc={C.purple}/>
+                  <KV k="− Payroll HC premiums" v={`(${$(p.hcPremiumPerPaycheck*PAYCHECKS_YR)})`} vc={C.green}/>
+                  <KV k="Estimated MAGI" v={$(magiAfter)} vc={C.gold} bold/>
+                  <div style={{ marginTop:10 }}>
+                    <KV k={`Roth IRA phase-out (${mfj2?"MFJ":"Single"} 2026)`} v={`$${(rothLow/1000).toFixed(0)}K–$${(rothHigh/1000).toFixed(0)}K`} vc={C.muted}/>
+                    <KV k="Roth IRA eligible?" v={eligible?"Yes ✓":"No — consider Backdoor Roth"} vc={eligible?C.green:C.red} bold/>
+                  </div>
+                  {p.hasVA&&<div style={{ marginTop:8, padding:"8px 10px", background:"rgba(34,199,122,0.07)", borderRadius:6, fontSize:10, color:C.green, lineHeight:1.6 }}>
+                    ✓ Your {$(p.vaMonthly*12)}/yr VA disability is excluded from MAGI — does not count toward Roth IRA limits or ACA subsidy calculations.
+                  </div>}
+                </>;
+              })()}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ textAlign:"center", marginTop:20 }}>
+          <button onClick={()=>setPage(1)} style={{ padding:"12px 32px", borderRadius:8, border:`1px solid ${C.border}`, background:"transparent", color:C.dim, fontFamily:"'Outfit',sans-serif", fontSize:13, fontWeight:600, cursor:"pointer" }}>
+            ← Back to Overview
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  /* ── MAIN RENDER ── */
+  return (
+    <div style={S.body}>
+      <Header/>
+      {page===1&&Page1()}
+      {page===2&&Page2()}
+      {page===3&&Page3()}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(RetirementCalc));
+</script>
+</body>
+</html>
